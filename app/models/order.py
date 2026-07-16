@@ -1,0 +1,114 @@
+import enum
+import uuid
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base, SCHEMA
+
+
+class OrderStatus(str, enum.Enum):
+    pending = "pending"
+    confirmed = "confirmed"
+    preparing = "preparing"
+    shipped = "shipped"
+    delivered = "delivered"
+    cancelled = "cancelled"
+    returned = "returned"
+
+
+class SaleChannel(str, enum.Enum):
+    online = "online"
+    presencial = "presencial"
+
+
+class Address(Base):
+    __tablename__ = "addresses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    label: Mapped[str | None] = mapped_column(String(80))
+    recipient_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(40))
+    address_line: Mapped[str] = mapped_column(String(300), nullable=False)
+    city: Mapped[str] = mapped_column(String(120), nullable=False)
+    region: Mapped[str | None] = mapped_column(String(120))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="addresses")
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    store_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.stores.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Nullable: ventas POS sin comprador registrado
+    buyer_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.users.id", ondelete="SET NULL"), index=True
+    )
+    # Nullable: se asigna después si la tienda tiene más de un almacén
+    warehouse_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.warehouses.id", ondelete="SET NULL"), index=True
+    )
+    address_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.addresses.id", ondelete="SET NULL")
+    )
+    channel: Mapped[SaleChannel] = mapped_column(
+        Enum(SaleChannel, name="sale_channel", schema=SCHEMA, native_enum=True),
+        nullable=False,
+        default=SaleChannel.online,
+    )
+    status: Mapped[OrderStatus] = mapped_column(
+        Enum(OrderStatus, name="order_status", schema=SCHEMA, native_enum=True),
+        nullable=False,
+        default=OrderStatus.pending,
+        index=True,
+    )
+    subtotal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    shipping_cost: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tax: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    store = relationship("Store", back_populates="orders")
+    buyer = relationship("User", back_populates="orders")
+    warehouse = relationship("Warehouse")
+    address = relationship("Address")
+    items = relationship("OrderItem", back_populates="order")
+    payments = relationship("Payment", back_populates="order")
+    shipments = relationship("Shipment", back_populates="order")
+
+
+class OrderItem(Base):
+    __tablename__ = "order_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    variant_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.product_variants.id", ondelete="SET NULL"), index=True
+    )
+    # Denormalizados: el histórico del pedido no cambia si el producto se edita/elimina
+    product_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    sku: Mapped[str | None] = mapped_column(String(80))
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    unit_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_cost: Mapped[int | None] = mapped_column(Integer)
+
+    order = relationship("Order", back_populates="items")
+    variant = relationship("ProductVariant")

@@ -1,0 +1,16 @@
+{
+  "name": "sesingular-backend-legacy-nestjs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LEGACY NestJS/Prisma — reemplazado por FastAPI. No usar para desarrollo nuevo. Ver README.md.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "legacy:dev": "npm run dev -w @singular/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
