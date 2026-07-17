@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     admin_email: str = ""
     admin_password: str = ""
+    seller_email: str = ""
+    seller_password: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:
