@@ -42,4 +42,23 @@ El primer acceso autenticado con Supabase crea automáticamente un perfil `buyer
 - `POST /payments/orders/{order_id}/intent` crea o recupera el intento pendiente.
 - `POST /payments/webhooks/{provider}` actualiza el pago y el pedido. La firma se valida si existe `webhook_secret` en configuración.
 
+## Pago manual: transferencia bancaria y Bre-B
+
+Método alterno a la pasarela, gestionado por cada vendedor (sin comisiones de intermediarios). Estados del pago: `pending` (sin comprobante) → `in_review` (comprobante subido) → `paid` | `rejected`.
+
+Vendedor:
+
+- `GET/POST /seller/payout-accounts`, `PATCH /seller/payout-accounts/{id}`, `DELETE /seller/payout-accounts/{id}` (baja lógica: conserva la referencia en pedidos ya pagados). Una sola entidad con `type` = `bank` | `bre_b`.
+- `GET /seller/payments?status=in_review`: bandeja de comprobantes, con URL firmada del archivo.
+- `POST /seller/payments/{id}/confirm` con `{ received_amount, note? }`: registra el monto realmente recibido y confirma el pedido.
+- `POST /seller/payments/{id}/reject` con `{ note }`: libera el stock reservado y cancela el pedido.
+
+Comprador:
+
+- `GET /catalog/stores/{store_id}/payment-options` (público): métodos habilitados y cuentas de cobro activas de la tienda.
+- `POST /orders/{order_id}/payment/receipt` (multipart): sube o reemplaza el comprobante (JPG/PNG/PDF, máx. 5 MB) y deja el pago en revisión.
+- `GET /orders/{order_id}/payment`: estado del pago, cuenta destino y comprobante.
+
+Los comprobantes se guardan en Supabase Storage (bucket privado `comprobantes`, ruta `{tienda_id}/{pedido_id}/`) y se exponen mediante URLs firmadas temporales. Cada cambio de estado dispara notificación por correo al comprador y al vendedor.
+
 La pasarela definitiva, impuestos/facturación, KYC formal y la integración con transportadoras externas siguen aislados como decisiones de integración. El contrato de pagos ya permite conectar Mercado Pago sin cambiar checkout, pedidos ni inventario.

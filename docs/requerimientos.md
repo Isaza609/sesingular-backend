@@ -152,3 +152,67 @@
 
 - **Categorías/subcategorías**: cada vendedor las crea y escoge manualmente para sus propios productos; no son globales ni administradas por la plataforma
 - **Volumen esperado**: escala media, hasta aproximadamente 30 peticiones (concurrentes) como referencia para dimensionar la arquitectura inicial
+Requerimiento: Método de Pago Manual (Transferencia Bancaria / Bre-B)
+Contexto
+
+Además de la pasarela de pago automatizada (Mercado Pago u otra), la plataforma debe soportar un método de pago manual gestionado por cada vendedor, evitando comisiones de intermediarios financieros. Este método aplica tanto a Transferencia Bancaria como a Bre-B, ya que comparten el mismo flujo operativo: el comprador transfiere directamente a una cuenta/llave del vendedor y sube un comprobante que el vendedor valida manualmente.
+
+Dado que la plataforma es multi-vendedor con aislamiento por tienda_id, este es un punto crítico: las cuentas bancarias y llaves Bre-B pertenecen al vendedor, no a la plataforma. Cada vendedor configura sus propios medios de cobro.
+
+RF-PAGO-01: Gestión de cuentas de cobro del vendedor
+
+El vendedor debe poder configurar, desde su panel, uno o más medios de cobro manual:
+
+Cuenta bancaria: banco, tipo de cuenta, número de cuenta, titular, documento del titular.
+Bre-B: llave (celular, cédula, correo o llave alfanumérica), nombre del titular.
+
+Reglas:
+
+Un vendedor puede tener múltiples cuentas bancarias activas (ej. Bancolombia, Banco de Bogotá) pero el comprador solo puede elegir una al pagar.
+El vendedor puede activar/desactivar cada cuenta sin eliminarla (histórico de pedidos ya pagados con esa cuenta debe conservar la referencia).
+Solo se muestran al comprador las cuentas marcadas como activas.
+RF-PAGO-02: Selección del método en checkout
+
+En el checkout, el comprador ve las opciones de pago habilitadas por el vendedor (según la imagen de referencia):
+
+Pasarela de pago (Mercado Pago, tarjeta, etc.)
+Transferencia Bancaria → selecciona entre las cuentas activas del vendedor
+Bre-B
+Efectivo (tienda física / contraentrega) — fuera del alcance de este requerimiento pero comparte el mismo módulo de "confirmación manual"
+
+Si el pedido incluye productos de varios vendedores, el sistema debe permitir pago manual por separado para cada vendedor (o restringir el carrito a un solo vendedor si esa regla ya existe — pendiente de confirmar si el checkout es multi-vendedor por orden o se divide en sub-órdenes por vendedor).
+
+RF-PAGO-03: Flujo de pago manual
+Comprador selecciona "Transferencia Bancaria" o "Bre-B" y elige la cuenta/llave.
+Sistema muestra los datos de destino (número de cuenta o llave, titular, banco) y el monto exacto a transferir.
+Comprador realiza la transferencia fuera de la plataforma.
+Comprador sube el comprobante (imagen o PDF) desde el checkout o desde el detalle del pedido.
+El pedido pasa a estado "Pendiente de verificación".
+El vendedor revisa el comprobante en su panel y confirma manualmente si el dinero llegó.
+Si confirma → pedido pasa a "Pago confirmado" y sigue el flujo normal (reserva de stock se convierte en descuento firme, se asigna almacén, etc.).
+Si rechaza → pedido pasa a "Pago rechazado", se libera el stock_reservado, y se notifica al comprador (con motivo opcional).
+RF-PAGO-04: Estados del pedido/pago (nuevo submódulo)
+
+Se sugiere un estado de pago independiente del estado del pedido, ya que el pedido puede seguir "creado" mientras el pago está en distintas fases:
+
+Estado de pago	Descripción
+pendiente_pago	Pedido creado, comprador aún no sube comprobante
+comprobante_subido	Comprador subió el comprobante, esperando revisión del vendedor
+pago_confirmado	Vendedor validó que el dinero llegó
+pago_rechazado	Vendedor no encontró el pago o el comprobante es inválido
+
+Este estado interactúa con stock_reservado: el stock se reserva desde que se sube el comprobante, y solo se convierte en stock_disponible descontado cuando el vendedor confirma; si se rechaza, se libera.
+
+RF-PAGO-05: Comprobante de pago
+Formatos aceptados: imagen (jpg/png) o PDF.
+Se almacena en el bucket S3-compatible ya definido para imágenes, en una ruta separada (ej. comprobantes/{tienda_id}/{pedido_id}/).
+Debe quedar asociado al pedido y visible tanto para el comprador (lo que subió) como para el vendedor (para validar).
+Opcional: permitir reemplazar el comprobante si el vendedor lo rechaza y el comprador quiere volver a intentar.
+RF-PAGO-06: Notificaciones
+Al comprador: cuando sube el comprobante (confirmación de recepción), y cuando el vendedor confirma o rechaza el pago.
+Al vendedor: cuando un comprador sube un comprobante pendiente de revisión (para que no se le olvide validar).
+Casos borde a resolver
+Tiempo límite: ¿cuánto tiempo se mantiene reservado el stock si el comprador nunca sube el comprobante? ¿Hay expiración automática del pedido?
+Comprobante subido pero nunca revisado: ¿hay un recordatorio automático al vendedor tras X horas?
+Monto incorrecto: el vendedor puede recibir un valor distinto al del pedido (transferencia parcial o de más). ¿Se permite confirmación parcial o debe rechazarse siempre que no coincida exactamente?
+Bre-B vs Transferencia Bancaria: ¿se modelan como el mismo tipo de "cuenta de cobro" con un campo tipo (bancaria/bre_b) o como entidades distintas? Recomendación: una sola entidad cuentas_cobro_vendedor con campo tipo para simplificar el checkout y la reutilización de lógica de confirmación manual.

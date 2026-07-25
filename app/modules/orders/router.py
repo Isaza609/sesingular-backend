@@ -3,17 +3,21 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Address, Cart, CartItem, Coupon, Order, OrderItem, Payment, PlatformSetting, ProductVariant, Store, Warehouse
+from app.models import Address, Cart, CartItem, Coupon, Favorite, Order, OrderItem, Payment, PayoutAccount, PlatformSetting, Product, ProductVariant, Store, StoreMember, Warehouse
+from app.models.catalog import ProductStatus
 from app.models.order import OrderStatus, SaleChannel
 from app.models.payment import PaymentStatus
 from app.modules.auth.deps import get_current_user
 from app.models.user import User
+from app.modules.catalog.router import _product_out
+from app.modules.common import mailer
 from app.modules.common.permissions import get_seller_store, require_buyer
+from app.modules.common.storage import signed_url, upload_receipt
 from app.modules.inventory.service import release_order, reserve_variant
 from app.modules.orders.schemas import AddressIn, AddressPatch, CartItemIn, CartItemPatch, CheckoutIn, CartOut, OrderOut, OrderStatusPatch, WarehouseAssign
 
@@ -34,6 +38,7 @@ def _order_out(order: Order) -> dict:
         "store_id": order.store_id,
         "store_name": order.store.name,
         "buyer_id": order.buyer_id,
+        "buyer_name": order.buyer.name if order.buyer else None,
         "warehouse_id": order.warehouse_id,
         "address_id": order.address_id,
         "channel": order.channel.value,
@@ -47,6 +52,58 @@ def _order_out(order: Order) -> dict:
         "items": [{"id": item.id, "variant_id": item.variant_id, "product_name": item.product_name, "sku": item.sku, "quantity": item.quantity, "unit_price": item.unit_price, "unit_cost": item.unit_cost} for item in order.items],
         "payments": [{"id": payment.id, "provider": payment.provider, "method": payment.method, "status": payment.status.value, "amount": payment.amount, "currency": payment.currency} for payment in order.payments],
     }
+
+
+def _payout_account_out(account: PayoutAccount | None) -> dict | None:
+    """Datos de la cuenta destino que ve el comprador para transferir."""
+    if account is None:
+        return None
+    return {
+        "id": account.id,
+        "type": account.type.value,
+        "label": account.label,
+        "bank_name": account.bank_name,
+        "account_type": account.account_type,
+        "account_number": account.account_number,
+        "breb_key": account.breb_key,
+        "holder_name": account.holder_name,
+        "holder_document": account.holder_document,
+        "active": account.active,
+    }
+
+
+MANUAL_METHODS = {"transfer", "breb"}
+
+
+def _payment_out(payment: Payment | None, with_receipt: bool = False) -> dict | None:
+    """Estado del pago manual, con la cuenta destino y el comprobante firmado."""
+    if payment is None:
+        return None
+    data = {
+        "id": payment.id,
+        "order_id": payment.order_id,
+        "method": payment.method,
+        "provider": payment.provider,
+        "status": payment.status.value,
+        "amount": payment.amount,
+        "currency": payment.currency,
+        "is_manual": payment.method in MANUAL_METHODS,
+        "payout_account": _payout_account_out(payment.payout_account),
+        "has_receipt": bool(payment.receipt_path),
+        "receipt_uploaded_at": payment.receipt_uploaded_at,
+        "received_amount": payment.received_amount,
+        "review_note": payment.review_note,
+        "reviewed_at": payment.reviewed_at,
+    }
+    if with_receipt:
+        data["receipt_url"] = signed_url(payment.receipt_path)
+    return data
+
+
+def _latest_payment(order: Order) -> Payment | None:
+    if not order.payments:
+        return None
+    return sorted(order.payments, key=lambda p: p.created_at)[-1]
 
 
 def _get_cart(user: User, db: Session) -> Cart:
@@ -121,6 +178,38 @@ def delete_address(address_id: str, user: User = Depends(require_buyer), db: Ses
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Dirección no encontrada")
     db.delete(address)
     db.commit()
+
+
+@buyer_router.get("/favorites")
+def list_favorites(user: User = Depends(require_buyer), db: Session = Depends(get_db)):
+    favs = db.scalars(
+        select(Favorite).where(Favorite.user_id == user.id).order_by(Favorite.created_at.desc())
+    ).all()
+    return [_product_out(f.product) for f in favs if f.product is not None]
+
+
+@buyer_router.post("/favorites/{product_id}", status_code=status.HTTP_201_CREATED)
+def add_favorite(product_id: str, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
+    product = db.get(Product, product_id)
+    if product is None or product.status == ProductStatus.discontinued:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
+    existing = db.scalar(
+        select(Favorite).where(Favorite.user_id == user.id, Favorite.product_id == product_id)
+    )
+    if existing is None:
+        db.add(Favorite(user_id=user.id, product_id=product_id))
+        db.commit()
+    return {"product_id": product_id, "favorited": True}
+
+
+@buyer_router.delete("/favorites/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_favorite(product_id: str, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
+    favorite = db.scalar(
+        select(Favorite).where(Favorite.user_id == user.id, Favorite.product_id == product_id)
+    )
+    if favorite is not None:
+        db.delete(favorite)
+        db.commit()
 
 
 @buyer_router.get("/cart", response_model=CartOut)
@@ -242,7 +331,14 @@ def checkout(body: CheckoutIn, user: User = Depends(require_buyer), db: Session 
             for cart_item in items:
                 reserve_variant(db, cart_item.variant_id, cart_item.quantity, order.id)
                 db.add(OrderItem(order_id=order.id, variant_id=cart_item.variant_id, product_name=cart_item.variant.product.name, sku=cart_item.variant.sku, quantity=cart_item.quantity, unit_price=cart_item.variant.price, unit_cost=cart_item.variant.cost))
-            db.add(Payment(order_id=order.id, provider="pending", method=body.payment_method, status=PaymentStatus.pending, amount=order.total, platform_fee=order.total * commission_pct // 100, seller_amount=order.total - (order.total * commission_pct // 100), currency="COP"))
+            is_manual = body.payment_method in MANUAL_METHODS
+            # La cuenta elegida solo aplica si pertenece a esta tienda y está activa.
+            payout_account_id = None
+            if is_manual and body.payout_account_id:
+                account = db.get(PayoutAccount, body.payout_account_id)
+                if account is not None and account.store_id == store_id and account.active:
+                    payout_account_id = account.id
+            db.add(Payment(order_id=order.id, provider="manual" if is_manual else "pending", method=body.payment_method, status=PaymentStatus.pending, amount=order.total, platform_fee=order.total * commission_pct // 100, seller_amount=order.total - (order.total * commission_pct // 100), currency="COP", payout_account_id=payout_account_id))
             created.append(order)
         db.query(CartItem).filter(CartItem.cart_id == cart.id).delete(synchronize_session=False)
         db.commit()
@@ -282,3 +378,72 @@ def cancel_order(order_id: str, user: User = Depends(require_buyer), db: Session
     db.commit()
     db.refresh(order)
     return OrderOut.model_validate(_order_out(order))
+
+
+# --- Pago manual del comprador (RF-PAGO-03 / RF-PAGO-05) ---------------------
+
+
+def _buyer_order(order_id: str, user: User, db: Session) -> Order:
+    order = db.get(Order, order_id)
+    if order is None or order.buyer_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Pedido no encontrado")
+    return order
+
+
+@buyer_router.get("/orders/{order_id}/payment")
+def buyer_order_payment(order_id: str, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
+    """Estado del pago, cuenta destino y comprobante ya subido."""
+    order = _buyer_order(order_id, user, db)
+    return _payment_out(_latest_payment(order), with_receipt=True)
+
+
+@buyer_router.post("/orders/{order_id}/payment/receipt")
+def upload_payment_receipt(
+    order_id: str,
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    payout_account_id: str | None = Form(default=None),
+    user: User = Depends(require_buyer),
+    db: Session = Depends(get_db),
+):
+    """Sube (o reemplaza) el comprobante y deja el pago en revisión del vendedor."""
+    order = _buyer_order(order_id, user, db)
+    if order.status in (OrderStatus.cancelled, OrderStatus.returned):
+        raise HTTPException(status.HTTP_409_CONFLICT, "El pedido ya no admite comprobantes")
+
+    payment = _latest_payment(order)
+    if payment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "El pedido no tiene un pago asociado")
+    if payment.status == PaymentStatus.paid:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Este pago ya fue confirmado")
+
+    if payout_account_id:
+        account = db.get(PayoutAccount, payout_account_id)
+        if account is None or account.store_id != order.store_id or not account.active:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cuenta de cobro no válida para esta tienda")
+        payment.payout_account_id = account.id
+    if payment.payout_account_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Debes elegir la cuenta a la que transferiste")
+
+    content = file.file.read()
+    payment.receipt_path = upload_receipt(content, file.content_type, order.store_id, order.id)
+    payment.receipt_uploaded_at = datetime.now(timezone.utc)
+    payment.status = PaymentStatus.in_review
+    payment.provider = "manual"
+    # Un comprobante nuevo reabre la revisión: se limpia el veredicto anterior.
+    payment.review_note = None
+    payment.reviewed_at = None
+    payment.reviewed_by = None
+    db.commit()
+    db.refresh(payment)
+
+    amount_text = f"${payment.amount:,.0f} COP".replace(",", ".")
+    seller_email = db.scalar(
+        select(User.email)
+        .join(StoreMember, StoreMember.user_id == User.id)
+        .where(StoreMember.store_id == order.store_id)
+        .order_by(StoreMember.created_at)
+    )
+    background.add_task(mailer.receipt_uploaded_to_seller, seller_email, order.id, user.name, amount_text)
+    background.add_task(mailer.receipt_uploaded_to_buyer, user.email, order.id)
+    return _payment_out(payment, with_receipt=True)

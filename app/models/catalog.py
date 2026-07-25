@@ -66,6 +66,12 @@ class Product(Base):
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     short_desc: Mapped[str | None] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text)
+    # Material / tipo de accesorio mostrado en el catálogo (ej. "Perlas naturales").
+    material: Mapped[str | None] = mapped_column(String(120))
+    # Etiqueta destacada en la tarjeta: nuevo | destacado | oferta.
+    badge: Mapped[str | None] = mapped_column(String(20))
+    # Marca "más vendido" para orden y secciones destacadas.
+    bestseller: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[ProductStatus] = mapped_column(
         Enum(ProductStatus, name="product_status", schema=SCHEMA, native_enum=True),
         nullable=False,

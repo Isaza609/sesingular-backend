@@ -2,20 +2,32 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Coupon, Order, OrderItem, Payment, PlatformSetting, ProductVariant, Promotion, Store, User, Warehouse
+from app.models import Coupon, Order, OrderItem, Payment, PayoutAccount, PlatformSetting, ProductVariant, Promotion, Store, User, Warehouse
 from app.models.order import OrderStatus, SaleChannel
 from app.models.payment import PaymentStatus
+from app.models.payout import PayoutAccountType
 from app.models.promotion import DiscountType
-from app.modules.common.permissions import get_seller_store
+from app.modules.common import mailer
+from app.modules.common.permissions import get_seller_store, require_seller
+from app.modules.common.storage import signed_url
 from app.modules.inventory.service import consume_variant, fulfill_reserved_order, release_order
-from app.modules.orders.router import _order_out
+from app.modules.orders.router import _order_out, _payout_account_out
 from app.modules.orders.schemas import OrderOut, OrderStatusPatch, PosOrderIn, WarehouseAssign
-from app.modules.seller.schemas import CouponIn, CouponPatch, PromotionIn, PromotionPatch
+from app.modules.seller.schemas import (
+    CouponIn,
+    CouponPatch,
+    PaymentConfirmIn,
+    PaymentRejectIn,
+    PayoutAccountIn,
+    PayoutAccountPatch,
+    PromotionIn,
+    PromotionPatch,
+)
 
 router = APIRouter(prefix="/seller", tags=["seller"])
 
@@ -215,5 +227,171 @@ def patch_coupon(coupon_id: str, body: CouponPatch, store: Store = Depends(get_s
 
 @router.get("/customers")
 def seller_customers(store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
-    rows = db.execute(select(User.id, User.name, User.email, func.count(Order.id).label("orders"), func.coalesce(func.sum(Order.total), 0).label("spent")).join(Order, Order.buyer_id == User.id).where(Order.store_id == store.id, Order.status != OrderStatus.cancelled).group_by(User.id, User.name, User.email).order_by(func.sum(Order.total).desc())).all()
-    return [{"id": row.id, "name": row.name, "email": row.email, "orders": row.orders, "spent": row.spent} for row in rows]
+    rows = db.execute(select(User.id, User.name, User.email, User.tier, func.count(Order.id).label("orders"), func.coalesce(func.sum(Order.total), 0).label("spent")).join(Order, Order.buyer_id == User.id).where(Order.store_id == store.id, Order.status != OrderStatus.cancelled).group_by(User.id, User.name, User.email, User.tier).order_by(func.sum(Order.total).desc())).all()
+    return [{"id": row.id, "name": row.name, "email": row.email, "tier": row.tier, "orders": row.orders, "spent": row.spent} for row in rows]
+
+
+# --- Cuentas de cobro manual (RF-PAGO-01) -----------------------------------
+
+
+@router.get("/payout-accounts")
+def list_payout_accounts(store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    rows = db.scalars(
+        select(PayoutAccount)
+        .where(PayoutAccount.store_id == store.id)
+        .order_by(PayoutAccount.active.desc(), PayoutAccount.created_at.desc())
+    ).all()
+    return [_payout_account_out(row) for row in rows]
+
+
+@router.post("/payout-accounts", status_code=status.HTTP_201_CREATED)
+def create_payout_account(body: PayoutAccountIn, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    values = body.model_dump()
+    values["type"] = PayoutAccountType(values["type"])
+    account = PayoutAccount(store_id=store.id, **values)
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return _payout_account_out(account)
+
+
+def _seller_payout_account(account_id: str, store: Store, db: Session) -> PayoutAccount:
+    account = db.get(PayoutAccount, account_id)
+    if account is None or account.store_id != store.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cuenta de cobro no encontrada")
+    return account
+
+
+@router.patch("/payout-accounts/{account_id}")
+def patch_payout_account(account_id: str, body: PayoutAccountPatch, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    account = _seller_payout_account(account_id, store, db)
+    for key, value in body.model_dump(exclude_unset=True).items():
+        setattr(account, key, value)
+    db.commit()
+    db.refresh(account)
+    return _payout_account_out(account)
+
+
+@router.delete("/payout-accounts/{account_id}")
+def deactivate_payout_account(account_id: str, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    """Baja lógica: conserva la referencia en pedidos ya pagados con esa cuenta."""
+    account = _seller_payout_account(account_id, store, db)
+    account.active = False
+    db.commit()
+    db.refresh(account)
+    return _payout_account_out(account)
+
+
+# --- Revisión de comprobantes (RF-PAGO-03) ----------------------------------
+
+
+def _seller_payment_out(payment: Payment) -> dict:
+    order = payment.order
+    return {
+        "id": payment.id,
+        "order_id": order.id,
+        "status": payment.status.value,
+        "method": payment.method,
+        "amount": payment.amount,
+        "currency": payment.currency,
+        "buyer_name": order.buyer.name if order.buyer else None,
+        "buyer_email": order.buyer.email if order.buyer else None,
+        "order_status": order.status.value,
+        "created_at": order.created_at,
+        "receipt_uploaded_at": payment.receipt_uploaded_at,
+        "receipt_url": signed_url(payment.receipt_path),
+        "received_amount": payment.received_amount,
+        "review_note": payment.review_note,
+        "reviewed_at": payment.reviewed_at,
+        "payout_account": _payout_account_out(payment.payout_account),
+    }
+
+
+@router.get("/payments")
+def seller_payments(
+    payment_status: str | None = Query(default=None, alias="status", pattern="^(pending|in_review|paid|rejected|refunded)$"),
+    store: Store = Depends(get_seller_store),
+    db: Session = Depends(get_db),
+):
+    """Bandeja de pagos manuales de la tienda (por defecto, los que esperan revisión)."""
+    stmt = select(Payment).join(Order, Payment.order_id == Order.id).where(Order.store_id == store.id)
+    if payment_status:
+        stmt = stmt.where(Payment.status == PaymentStatus(payment_status))
+    else:
+        stmt = stmt.where(Payment.status == PaymentStatus.in_review)
+    rows = db.scalars(stmt.order_by(Payment.receipt_uploaded_at.desc().nullslast(), Payment.created_at.desc())).unique().all()
+    return [_seller_payment_out(row) for row in rows]
+
+
+def _seller_payment(payment_id: str, store: Store, db: Session) -> Payment:
+    payment = db.get(Payment, payment_id)
+    if payment is None or payment.order.store_id != store.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Pago no encontrado")
+    return payment
+
+
+@router.post("/payments/{payment_id}/confirm")
+def confirm_manual_payment(
+    payment_id: str,
+    body: PaymentConfirmIn,
+    background: BackgroundTasks,
+    store: Store = Depends(get_seller_store),
+    user: User = Depends(require_seller),
+    db: Session = Depends(get_db),
+):
+    """El vendedor confirma que el dinero llegó, registrando el monto recibido."""
+    payment = _seller_payment(payment_id, store, db)
+    if payment.status not in (PaymentStatus.in_review, PaymentStatus.pending):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Este pago ya fue revisado")
+    order = payment.order
+    payment.status = PaymentStatus.paid
+    payment.received_amount = body.received_amount
+    payment.review_note = body.note
+    payment.reviewed_at = datetime.now(timezone.utc)
+    payment.reviewed_by = user.id
+    if order.status == OrderStatus.pending:
+        order.status = OrderStatus.confirmed
+    db.commit()
+    db.refresh(payment)
+
+    amount_text = f"${body.received_amount:,.0f} COP".replace(",", ".")
+    background.add_task(
+        mailer.payment_confirmed_to_buyer,
+        order.buyer.email if order.buyer else None,
+        order.id,
+        amount_text,
+    )
+    return _seller_payment_out(payment)
+
+
+@router.post("/payments/{payment_id}/reject")
+def reject_manual_payment(
+    payment_id: str,
+    body: PaymentRejectIn,
+    background: BackgroundTasks,
+    store: Store = Depends(get_seller_store),
+    user: User = Depends(require_seller),
+    db: Session = Depends(get_db),
+):
+    """Rechaza el pago: libera el stock reservado y cancela el pedido."""
+    payment = _seller_payment(payment_id, store, db)
+    if payment.status not in (PaymentStatus.in_review, PaymentStatus.pending):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Este pago ya fue revisado")
+    order = payment.order
+    payment.status = PaymentStatus.rejected
+    payment.review_note = body.note
+    payment.reviewed_at = datetime.now(timezone.utc)
+    payment.reviewed_by = user.id
+    if order.status not in (OrderStatus.cancelled, OrderStatus.delivered, OrderStatus.returned):
+        release_order(db, order)
+        order.status = OrderStatus.cancelled
+    db.commit()
+    db.refresh(payment)
+
+    background.add_task(
+        mailer.payment_rejected_to_buyer,
+        order.buyer.email if order.buyer else None,
+        order.id,
+        body.note,
+    )
+    return _seller_payment_out(payment)

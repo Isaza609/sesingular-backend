@@ -11,6 +11,8 @@ from app.models.cart import Cart, CartItem
 from app.models.promotion import Coupon, Promotion
 from app.models.review import Dispute, Review, ReviewReport
 from app.models.platform import PlatformSetting
+from app.models.favorite import Favorite
+from app.models.payout import PayoutAccount
 
 __all__ = [
     "User",
@@ -37,4 +39,6 @@ __all__ = [
     "ReviewReport",
     "Dispute",
     "PlatformSetting",
+    "Favorite",
+    "PayoutAccount",
 ]

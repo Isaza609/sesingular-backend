@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Category, InventoryMovement, PlatformSetting, Product, ProductCategory, ProductImage, ProductVariant, StockLevel, Store, Warehouse
+from app.models import Category, InventoryMovement, PayoutAccount, PlatformSetting, Product, ProductCategory, ProductImage, ProductVariant, StockLevel, Store, Warehouse
 from app.models.catalog import ProductStatus
 from app.models.inventory import InventoryReason
 from app.models.user import User
@@ -71,6 +71,9 @@ def _product_out(product: Product) -> dict:
         "name": product.name,
         "short_desc": product.short_desc,
         "description": product.description,
+        "material": product.material,
+        "badge": product.badge,
+        "bestseller": product.bestseller,
         "status": product.status.value,
         "categories": [
             {"id": link.category.id, "slug": link.category.slug, "name": link.category.name}
@@ -113,6 +116,40 @@ def _product_query(store_id: str | None = None):
 def public_stores(db: Session = Depends(get_db)):
     stores = db.scalars(select(Store).where(Store.active.is_(True)).order_by(Store.name)).all()
     return {"items": [StorePublicOut.model_validate(store, from_attributes=True) for store in stores]}
+
+
+@public_router.get("/stores/{store_id}/payment-options")
+def public_store_payment_options(store_id: str, db: Session = Depends(get_db)):
+    """Métodos habilitados por el vendedor y sus cuentas de cobro activas (RF-PAGO-02)."""
+    store = db.get(Store, store_id)
+    if store is None or not store.active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Tienda no encontrada")
+    row = db.get(PlatformSetting, f"store_config:{store_id}")
+    config = row.value if row else StoreSettingsIn().model_dump()
+    accounts = db.scalars(
+        select(PayoutAccount)
+        .where(PayoutAccount.store_id == store_id, PayoutAccount.active.is_(True))
+        .order_by(PayoutAccount.created_at)
+    ).all()
+    return {
+        "store_id": store_id,
+        "store_name": store.name,
+        "payment_methods": config.get("payment_methods", []),
+        "payout_accounts": [
+            {
+                "id": account.id,
+                "type": account.type.value,
+                "label": account.label,
+                "bank_name": account.bank_name,
+                "account_type": account.account_type,
+                "account_number": account.account_number,
+                "breb_key": account.breb_key,
+                "holder_name": account.holder_name,
+                "holder_document": account.holder_document,
+            }
+            for account in accounts
+        ],
+    }
 
 
 @public_router.get("/categories", response_model=list[CategoryOut])
@@ -159,8 +196,10 @@ def public_products(
         stmt = stmt.order_by(price.asc())
     elif sort == "precio-desc":
         stmt = stmt.order_by(price.desc())
-    else:
-        stmt = stmt.order_by(Product.created_at.desc())
+    elif sort == "vendidos":
+        stmt = stmt.order_by(Product.bestseller.desc(), Product.created_at.desc())
+    else:  # destacados
+        stmt = stmt.order_by(Product.bestseller.desc(), Product.created_at.desc())
     count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
     total = db.scalar(count_stmt) or 0
     rows = db.scalars(stmt.offset((page - 1) * page_size).limit(page_size)).unique().all()
@@ -324,6 +363,9 @@ def create_product(body: ProductIn, store: Store = Depends(get_seller_store), db
         name=body.name,
         short_desc=body.short_desc,
         description=body.description,
+        material=body.material,
+        badge=body.badge,
+        bestseller=body.bestseller,
         status=body.status,
     )
     db.add(product)

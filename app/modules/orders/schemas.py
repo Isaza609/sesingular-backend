@@ -44,6 +44,8 @@ class CheckoutIn(BaseModel):
     address: AddressIn | None = None
     coupon_code: str | None = None
     payment_method: str = Field(default="card", min_length=1, max_length=60)
+    # Cuenta de cobro elegida cuando el método es manual (transfer | breb)
+    payout_account_id: str | None = None
     notes: str | None = None
 
     @model_validator(mode="after")
@@ -76,6 +78,7 @@ class OrderOut(BaseModel):
     store_id: str
     store_name: str
     buyer_id: str | None
+    buyer_name: str | None = None
     warehouse_id: str | None
     address_id: str | None
     channel: str

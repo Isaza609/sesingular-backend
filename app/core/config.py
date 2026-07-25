@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     # Solo necesario si el proyecto Supabase firma JWT con HS256 (legacy)
     supabase_jwt_secret: str = ""
 
+    # Almacenamiento de comprobantes de pago (Supabase Storage, bucket privado)
+    receipts_bucket: str = "comprobantes"
+    receipt_max_bytes: int = 5 * 1024 * 1024
+
+    # Notificaciones por correo (Resend). Sin API key, el envío es no-op.
+    email_provider: str = "resend"
+    resend_api_key: str = ""
+    email_from: str = ""
+
     admin_email: str = ""
     admin_password: str = ""
     seller_email: str = ""

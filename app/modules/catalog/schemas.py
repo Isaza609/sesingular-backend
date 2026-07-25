@@ -44,6 +44,9 @@ class ProductIn(BaseModel):
     slug: str | None = Field(default=None, max_length=160)
     short_desc: str | None = Field(default=None, max_length=500)
     description: str | None = None
+    material: str | None = Field(default=None, max_length=120)
+    badge: str | None = Field(default=None, pattern="^(nuevo|destacado|oferta)$")
+    bestseller: bool = False
     status: str = Field(default="draft", pattern="^(draft|active|out_of_stock|discontinued)$")
     category_ids: list[str] = Field(default_factory=list)
     variants: list[VariantIn] = Field(min_length=1)
@@ -55,6 +58,9 @@ class ProductPatch(BaseModel):
     slug: str | None = Field(default=None, max_length=160)
     short_desc: str | None = Field(default=None, max_length=500)
     description: str | None = None
+    material: str | None = Field(default=None, max_length=120)
+    badge: str | None = Field(default=None, pattern="^(nuevo|destacado|oferta)$")
+    bestseller: bool | None = None
     status: str | None = Field(default=None, pattern="^(draft|active|out_of_stock|discontinued)$")
     category_ids: list[str] | None = None
 
@@ -67,6 +73,9 @@ class ProductOut(BaseModel):
     name: str
     short_desc: str | None
     description: str | None
+    material: str | None = None
+    badge: str | None = None
+    bestseller: bool = False
     status: str
     categories: list[dict]
     variants: list[dict]
@@ -94,7 +103,11 @@ class StorePublicOut(BaseModel):
 
 
 class StoreSettingsIn(BaseModel):
-    payment_methods: list[str] = Field(default_factory=lambda: ["card", "pse", "nequi"])
+    # transfer / breb son los métodos manuales: sólo se muestran si además la
+    # tienda tiene cuentas de cobro activas.
+    payment_methods: list[str] = Field(
+        default_factory=lambda: ["card", "pse", "nequi", "transfer", "breb"]
+    )
     shipping_flat_cost: int = Field(default=12900, ge=0)
     shipping_free_threshold: int = Field(default=120000, ge=0)
     shipping_zones: list[dict] = Field(default_factory=list)
