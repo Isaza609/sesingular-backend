@@ -24,12 +24,14 @@ APP_TABLES = {
     "addresses",
     "orders",
     "order_items",
+    "order_adjustments",
     "payments",
     "shipments",
     "carts",
     "cart_items",
     "promotions",
     "coupons",
+    "extra_charges",
     "reviews",
     "review_reports",
     "disputes",
@@ -107,7 +109,7 @@ def test_alembic_version_table_in_marketplace(migrated_db, db_engine, settings):
         version = conn.execute(
             text(f'SELECT version_num FROM "{schema}".alembic_version')
         ).scalar_one()
-        assert version == "0003_commerce_admin"
+        assert version == "0009_pricing_promotions"
 
 
 def test_smoke_insert_user_in_marketplace(migrated_db, db_engine, settings):

@@ -4,14 +4,15 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Coupon, Order, OrderItem, Payment, PayoutAccount, PlatformSetting, ProductVariant, Promotion, Store, User, Warehouse
+from app.models import Coupon, ExtraCharge, Order, OrderItem, Payment, PayoutAccount, PlatformSetting, Product, ProductVariant, Promotion, Store, StoreMember, User, Warehouse
 from app.models.order import OrderStatus, SaleChannel
 from app.models.payment import PaymentStatus
 from app.models.payout import PayoutAccountType
-from app.models.promotion import DiscountType
+from app.models.promotion import ChargeType, DiscountType, PromotionScope
 from app.modules.common import mailer
 from app.modules.common.permissions import get_seller_store, require_seller
 from app.modules.common.storage import signed_url
@@ -21,15 +22,27 @@ from app.modules.orders.schemas import OrderOut, OrderStatusPatch, PosOrderIn, W
 from app.modules.seller.schemas import (
     CouponIn,
     CouponPatch,
+    ExtraChargeIn,
+    ExtraChargeOut,
+    ExtraChargePatch,
     PaymentConfirmIn,
     PaymentRejectIn,
     PayoutAccountIn,
     PayoutAccountPatch,
     PromotionIn,
+    PromotionOut,
     PromotionPatch,
+    SellerStoreMemberOut,
 )
 
 router = APIRouter(prefix="/seller", tags=["seller"])
+
+COMMON_RESPONSES = {
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol seller o cambio obligatorio de contrasena pendiente."},
+    404: {"description": "Recurso no encontrado."},
+    422: {"description": "Validacion Pydantic."},
+}
 
 
 def _assert_transition(current: OrderStatus, target: OrderStatus) -> None:
@@ -77,6 +90,37 @@ def seller_sales_report(
     db: Session = Depends(get_db),
 ):
     return seller_dashboard(date_from, date_to, store, db)
+
+
+@router.get(
+    "/store/members",
+    response_model=list[SellerStoreMemberOut],
+    status_code=status.HTTP_200_OK,
+    summary="Listar usuarios de mi tienda",
+    description=(
+        "Rol permitido: seller. HU-USR-05. Permite al vendedor consultar usuarios activos "
+        "e inactivos asociados a su misma tienda, sin crearlos ni desactivarlos."
+    ),
+    response_description="Usuarios asociados a la tienda del vendedor.",
+    responses=COMMON_RESPONSES,
+)
+def seller_store_members(store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    rows = db.scalars(
+        select(StoreMember).where(StoreMember.store_id == store.id).order_by(StoreMember.created_at)
+    ).all()
+    return [
+        SellerStoreMemberOut(
+            user_id=row.user.id,
+            email=row.user.email,
+            name=row.user.name,
+            phone=row.user.phone,
+            member_role=row.role,
+            active=row.user.active,
+            must_change_password=row.user.must_change_password,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
 
 
 @router.get("/orders", response_model=list[OrderOut])
@@ -161,68 +205,370 @@ def create_pos_order(body: PosOrderIn, store: Store = Depends(get_seller_store),
     return OrderOut.model_validate(_order_out(order))
 
 
+PROMOTION_RESPONSES = {
+    400: {"description": "Datos invalidos, vigencia incoherente o productos fuera de scope."},
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol seller o cambio obligatorio de contrasena pendiente."},
+    404: {"description": "Promocion, cupon, cargo o producto no encontrado."},
+    409: {"description": "Codigo de cupon duplicado en la tienda."},
+    422: {"description": "Validacion Pydantic."},
+}
+
+
 def _promotion_out(item: Promotion | Coupon) -> dict:
-    return {"id": item.id, "store_id": item.store_id, "code": getattr(item, "code", None), "name": getattr(item, "name", None), "discount_type": item.discount_type.value, "value": item.value, "min_quantity": getattr(item, "min_quantity", None), "max_uses": getattr(item, "max_uses", None), "used_count": getattr(item, "used_count", None), "starts_at": item.starts_at, "ends_at": item.ends_at, "active": item.active, "created_at": item.created_at}
+    return {
+        "id": item.id,
+        "store_id": item.store_id,
+        "code": getattr(item, "code", None),
+        "name": getattr(item, "name", None),
+        "discount_type": item.discount_type.value,
+        "value": item.value,
+        "min_quantity": getattr(item, "min_quantity", None),
+        "pay_quantity": getattr(item, "pay_quantity", None),
+        "max_uses": getattr(item, "max_uses", None),
+        "used_count": getattr(item, "used_count", None),
+        "scope": item.scope.value,
+        "product_ids": item.product_ids or [],
+        "starts_at": item.starts_at,
+        "ends_at": item.ends_at,
+        "active": item.active,
+        "created_at": item.created_at,
+    }
 
 
-@router.get("/promotions")
-def list_promotions(store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
-    return [_promotion_out(item) for item in db.scalars(select(Promotion).where(Promotion.store_id == store.id).order_by(Promotion.created_at.desc())).all()]
+def _extra_charge_out(item: ExtraCharge) -> dict:
+    return {
+        "id": item.id,
+        "store_id": item.store_id,
+        "name": item.name,
+        "charge_type": item.charge_type.value,
+        "value": item.value,
+        "scope": item.scope.value,
+        "product_ids": item.product_ids or [],
+        "active": item.active,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
 
 
-@router.post("/promotions", status_code=status.HTTP_201_CREATED)
+def _validate_window(starts_at: datetime | None, ends_at: datetime | None) -> None:
+    if starts_at is not None and ends_at is not None and starts_at > ends_at:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "La fecha de inicio no puede ser posterior a la fecha de fin")
+
+
+def _validate_product_scope(store: Store, product_ids: list[str] | None, scope: str | PromotionScope, db: Session) -> list[str]:
+    scope_value = scope.value if isinstance(scope, PromotionScope) else scope
+    ids = product_ids or []
+    if scope_value == PromotionScope.store.value:
+        return []
+    if not ids:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Debes enviar product_ids cuando el alcance es products")
+    products = db.scalars(select(Product).where(Product.id.in_(ids), Product.store_id == store.id)).all()
+    if len(products) != len(set(ids)):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Un producto no pertenece a tu tienda")
+    return ids
+
+
+def _validate_discount(discount_type: str, value: int, *, min_quantity: int | None = None, pay_quantity: int | None = None) -> None:
+    if discount_type == "percent" and not 1 <= value <= 100:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El porcentaje debe estar entre 1 y 100")
+    if discount_type == "volume":
+        if not min_quantity or min_quantity < 1:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "La promocion de volumen requiere min_quantity")
+        if pay_quantity is not None and pay_quantity >= min_quantity:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "pay_quantity debe ser menor que min_quantity")
+        if pay_quantity is None and value < 1:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "La promocion de volumen requiere unidades gratis")
+
+
+def _commit_seller_promo(db: Session) -> None:
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Ya existe un cupon con ese codigo en tu tienda") from exc
+
+
+@router.get(
+    "/promotions",
+    response_model=list[PromotionOut],
+    status_code=status.HTTP_200_OK,
+    summary="Listar promociones",
+    description="Rol permitido: seller. HU-PROM-02. Lista promociones de porcentaje, valor fijo o volumen configuradas para la tienda autenticada.",
+    response_description="Promociones de la tienda con vigencia, alcance y estado.",
+    responses=PROMOTION_RESPONSES,
+)
+def list_promotions(active: bool | None = None, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    stmt = select(Promotion).where(Promotion.store_id == store.id).order_by(Promotion.created_at.desc())
+    if active is not None:
+        stmt = stmt.where(Promotion.active.is_(active))
+    return [PromotionOut.model_validate(_promotion_out(item)) for item in db.scalars(stmt).all()]
+
+
+@router.post(
+    "/promotions",
+    response_model=PromotionOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear promocion",
+    description="Rol permitido: seller. HU-PROM-02. Crea una promocion con vigencia y alcance de tienda o productos propios; las promociones de volumen se aplican automaticamente en checkout.",
+    response_description="Promocion creada.",
+    responses=PROMOTION_RESPONSES,
+)
 def create_promotion(body: PromotionIn, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
-    item = Promotion(store_id=store.id, discount_type=DiscountType(body.discount_type), **body.model_dump(exclude={"discount_type"}))
+    _validate_window(body.starts_at, body.ends_at)
+    _validate_discount(body.discount_type, body.value, min_quantity=body.min_quantity, pay_quantity=body.pay_quantity)
+    product_ids = _validate_product_scope(store, body.product_ids, body.scope, db)
+    item = Promotion(
+        store_id=store.id,
+        discount_type=DiscountType(body.discount_type),
+        scope=PromotionScope(body.scope),
+        product_ids=product_ids,
+        **body.model_dump(exclude={"discount_type", "scope", "product_ids"}),
+    )
     db.add(item)
-    db.commit()
+    _commit_seller_promo(db)
     db.refresh(item)
-    return _promotion_out(item)
+    return PromotionOut.model_validate(_promotion_out(item))
 
 
-@router.patch("/promotions/{promotion_id}")
+@router.patch(
+    "/promotions/{promotion_id}",
+    response_model=PromotionOut,
+    status_code=status.HTTP_200_OK,
+    summary="Actualizar promocion",
+    description="Rol permitido: seller. HU-PROM-02. Actualiza una promocion propia, su vigencia, valor, alcance o estado activo para pedidos nuevos.",
+    response_description="Promocion actualizada.",
+    responses=PROMOTION_RESPONSES,
+)
 def patch_promotion(promotion_id: str, body: PromotionPatch, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     item = db.get(Promotion, promotion_id)
     if item is None or item.store_id != store.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Promoción no encontrada")
     values = body.model_dump(exclude_unset=True)
+    _validate_window(values.get("starts_at", item.starts_at), values.get("ends_at", item.ends_at))
+    discount_type = values.get("discount_type", item.discount_type.value)
+    _validate_discount(
+        discount_type,
+        values.get("value", item.value),
+        min_quantity=values.get("min_quantity", item.min_quantity),
+        pay_quantity=values.get("pay_quantity", item.pay_quantity),
+    )
+    if "scope" in values or "product_ids" in values:
+        scope = values.get("scope", item.scope.value)
+        values["product_ids"] = _validate_product_scope(store, values.get("product_ids", item.product_ids), scope, db)
+        values["scope"] = PromotionScope(scope)
     if "discount_type" in values:
         values["discount_type"] = DiscountType(values["discount_type"])
     for key, value in values.items():
         setattr(item, key, value)
+    _commit_seller_promo(db)
+    db.refresh(item)
+    return PromotionOut.model_validate(_promotion_out(item))
+
+
+@router.delete(
+    "/promotions/{promotion_id}",
+    response_model=PromotionOut,
+    status_code=status.HTTP_200_OK,
+    summary="Desactivar promocion",
+    description="Rol permitido: seller. HU-PROM-02. Desactiva una promocion propia para que deje de aplicar a pedidos nuevos.",
+    response_description="Promocion desactivada.",
+    responses=PROMOTION_RESPONSES,
+)
+def delete_promotion(promotion_id: str, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    item = db.get(Promotion, promotion_id)
+    if item is None or item.store_id != store.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Promocion no encontrada")
+    item.active = False
     db.commit()
     db.refresh(item)
-    return _promotion_out(item)
+    return PromotionOut.model_validate(_promotion_out(item))
 
 
-@router.get("/coupons")
-def list_coupons(store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
-    return [_promotion_out(item) for item in db.scalars(select(Coupon).where(Coupon.store_id == store.id).order_by(Coupon.created_at.desc())).all()]
+@router.get(
+    "/coupons",
+    response_model=list[PromotionOut],
+    status_code=status.HTTP_200_OK,
+    summary="Listar cupones",
+    description="Rol permitido: seller. HU-PROM-02. Lista cupones de la tienda autenticada con vigencia, usos y alcance.",
+    response_description="Cupones configurados por la tienda.",
+    responses=PROMOTION_RESPONSES,
+)
+def list_coupons(active: bool | None = None, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    stmt = select(Coupon).where(Coupon.store_id == store.id).order_by(Coupon.created_at.desc())
+    if active is not None:
+        stmt = stmt.where(Coupon.active.is_(active))
+    return [PromotionOut.model_validate(_promotion_out(item)) for item in db.scalars(stmt).all()]
 
 
-@router.post("/coupons", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/coupons",
+    response_model=PromotionOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear cupon",
+    description="Rol permitido: seller. HU-PROM-02. Crea un cupon con codigo normalizado, vigencia, usos y alcance de tienda o productos propios.",
+    response_description="Cupon creado.",
+    responses=PROMOTION_RESPONSES,
+)
 def create_coupon(body: CouponIn, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
-    item = Coupon(store_id=store.id, code=body.code.upper(), discount_type=DiscountType(body.discount_type), **body.model_dump(exclude={"code", "discount_type"}))
+    _validate_window(body.starts_at, body.ends_at)
+    _validate_discount(body.discount_type, body.value)
+    product_ids = _validate_product_scope(store, body.product_ids, body.scope, db)
+    item = Coupon(
+        store_id=store.id,
+        code=body.code.upper(),
+        discount_type=DiscountType(body.discount_type),
+        scope=PromotionScope(body.scope),
+        product_ids=product_ids,
+        **body.model_dump(exclude={"code", "discount_type", "scope", "product_ids"}),
+    )
     db.add(item)
-    db.commit()
+    _commit_seller_promo(db)
     db.refresh(item)
-    return _promotion_out(item)
+    return PromotionOut.model_validate(_promotion_out(item))
 
 
-@router.patch("/coupons/{coupon_id}")
+@router.patch(
+    "/coupons/{coupon_id}",
+    response_model=PromotionOut,
+    status_code=status.HTTP_200_OK,
+    summary="Actualizar cupon",
+    description="Rol permitido: seller. HU-PROM-02. Actualiza un cupon propio, incluido codigo, vigencia, usos, alcance o estado activo.",
+    response_description="Cupon actualizado.",
+    responses=PROMOTION_RESPONSES,
+)
 def patch_coupon(coupon_id: str, body: CouponPatch, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     item = db.get(Coupon, coupon_id)
     if item is None or item.store_id != store.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Cupón no encontrado")
     values = body.model_dump(exclude_unset=True)
+    _validate_window(values.get("starts_at", item.starts_at), values.get("ends_at", item.ends_at))
+    discount_type = values.get("discount_type", item.discount_type.value)
+    _validate_discount(discount_type, values.get("value", item.value))
     if "code" in values:
         values["code"] = values["code"].upper()
+    if "scope" in values or "product_ids" in values:
+        scope = values.get("scope", item.scope.value)
+        values["product_ids"] = _validate_product_scope(store, values.get("product_ids", item.product_ids), scope, db)
+        values["scope"] = PromotionScope(scope)
     if "discount_type" in values:
         values["discount_type"] = DiscountType(values["discount_type"])
     for key, value in values.items():
         setattr(item, key, value)
+    _commit_seller_promo(db)
+    db.refresh(item)
+    return PromotionOut.model_validate(_promotion_out(item))
+
+
+@router.delete(
+    "/coupons/{coupon_id}",
+    response_model=PromotionOut,
+    status_code=status.HTTP_200_OK,
+    summary="Desactivar cupon",
+    description="Rol permitido: seller. HU-PROM-02. Desactiva un cupon propio para que deje de aplicar a pedidos nuevos.",
+    response_description="Cupon desactivado.",
+    responses=PROMOTION_RESPONSES,
+)
+def delete_coupon(coupon_id: str, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    item = db.get(Coupon, coupon_id)
+    if item is None or item.store_id != store.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cupon no encontrado")
+    item.active = False
     db.commit()
     db.refresh(item)
-    return _promotion_out(item)
+    return PromotionOut.model_validate(_promotion_out(item))
+
+
+@router.get(
+    "/extra-charges",
+    response_model=list[ExtraChargeOut],
+    status_code=status.HTTP_200_OK,
+    summary="Listar cargos extra",
+    description="Rol permitido: seller. HU-PROM-04. Lista cargos extra manuales definidos por la tienda para desglose en checkout.",
+    response_description="Cargos extra de la tienda.",
+    responses=PROMOTION_RESPONSES,
+)
+def list_extra_charges(active: bool | None = None, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    stmt = select(ExtraCharge).where(ExtraCharge.store_id == store.id).order_by(ExtraCharge.created_at.desc())
+    if active is not None:
+        stmt = stmt.where(ExtraCharge.active.is_(active))
+    return [ExtraChargeOut.model_validate(_extra_charge_out(item)) for item in db.scalars(stmt).all()]
+
+
+@router.post(
+    "/extra-charges",
+    response_model=ExtraChargeOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear cargo extra",
+    description="Rol permitido: seller. HU-PROM-04. Crea un cargo extra manual fijo o porcentual con alcance de tienda o productos propios.",
+    response_description="Cargo extra creado.",
+    responses=PROMOTION_RESPONSES,
+)
+def create_extra_charge(body: ExtraChargeIn, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    if body.charge_type == "percent" and not 1 <= body.value <= 100:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El porcentaje debe estar entre 1 y 100")
+    product_ids = _validate_product_scope(store, body.product_ids, body.scope, db)
+    item = ExtraCharge(
+        store_id=store.id,
+        charge_type=ChargeType(body.charge_type),
+        scope=PromotionScope(body.scope),
+        product_ids=product_ids,
+        **body.model_dump(exclude={"charge_type", "scope", "product_ids"}),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return ExtraChargeOut.model_validate(_extra_charge_out(item))
+
+
+@router.patch(
+    "/extra-charges/{charge_id}",
+    response_model=ExtraChargeOut,
+    status_code=status.HTTP_200_OK,
+    summary="Actualizar cargo extra",
+    description="Rol permitido: seller. HU-PROM-04. Actualiza nombre, tipo, valor, alcance o estado de un cargo extra propio para pedidos nuevos.",
+    response_description="Cargo extra actualizado.",
+    responses=PROMOTION_RESPONSES,
+)
+def patch_extra_charge(charge_id: str, body: ExtraChargePatch, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    item = db.get(ExtraCharge, charge_id)
+    if item is None or item.store_id != store.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cargo extra no encontrado")
+    values = body.model_dump(exclude_unset=True)
+    charge_type = values.get("charge_type", item.charge_type.value)
+    value = values.get("value", item.value)
+    if charge_type == "percent" and not 1 <= value <= 100:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El porcentaje debe estar entre 1 y 100")
+    if "scope" in values or "product_ids" in values:
+        scope = values.get("scope", item.scope.value)
+        values["product_ids"] = _validate_product_scope(store, values.get("product_ids", item.product_ids), scope, db)
+        values["scope"] = PromotionScope(scope)
+    if "charge_type" in values:
+        values["charge_type"] = ChargeType(values["charge_type"])
+    for key, value in values.items():
+        setattr(item, key, value)
+    db.commit()
+    db.refresh(item)
+    return ExtraChargeOut.model_validate(_extra_charge_out(item))
+
+
+@router.delete(
+    "/extra-charges/{charge_id}",
+    response_model=ExtraChargeOut,
+    status_code=status.HTTP_200_OK,
+    summary="Desactivar cargo extra",
+    description="Rol permitido: seller. HU-PROM-04. Desactiva un cargo extra para que deje de aplicarse a pedidos nuevos sin alterar pedidos historicos.",
+    response_description="Cargo extra desactivado.",
+    responses=PROMOTION_RESPONSES,
+)
+def delete_extra_charge(charge_id: str, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    item = db.get(ExtraCharge, charge_id)
+    if item is None or item.store_id != store.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cargo extra no encontrado")
+    item.active = False
+    db.commit()
+    db.refresh(item)
+    return ExtraChargeOut.model_validate(_extra_charge_out(item))
 
 
 @router.get("/customers")

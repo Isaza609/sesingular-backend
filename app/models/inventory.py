@@ -73,3 +73,4 @@ class InventoryMovement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     variant = relationship("ProductVariant", back_populates="movements")
+    warehouse = relationship("Warehouse")

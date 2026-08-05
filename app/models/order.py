@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, SCHEMA
@@ -21,6 +22,11 @@ class OrderStatus(str, enum.Enum):
 class SaleChannel(str, enum.Enum):
     online = "online"
     presencial = "presencial"
+
+
+class OrderAdjustmentKind(str, enum.Enum):
+    discount = "discount"
+    extra_charge = "extra_charge"
 
 
 class Address(Base):
@@ -89,6 +95,7 @@ class Order(Base):
     warehouse = relationship("Warehouse")
     address = relationship("Address")
     items = relationship("OrderItem", back_populates="order")
+    adjustments = relationship("OrderAdjustment", back_populates="order")
     payments = relationship("Payment", back_populates="order")
     shipments = relationship("Shipment", back_populates="order")
 
@@ -112,3 +119,24 @@ class OrderItem(Base):
 
     order = relationship("Order", back_populates="items")
     variant = relationship("ProductVariant")
+
+
+class OrderAdjustment(Base):
+    __tablename__ = "order_adjustments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[OrderAdjustmentKind] = mapped_column(
+        Enum(OrderAdjustmentKind, name="order_adjustment_kind", schema=SCHEMA, native_enum=True),
+        nullable=False,
+    )
+    source_type: Mapped[str | None] = mapped_column(String(40))
+    source_id: Mapped[str | None] = mapped_column(String(36))
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    order = relationship("Order", back_populates="adjustments")

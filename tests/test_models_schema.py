@@ -40,6 +40,18 @@ APP_TABLES = {
     "platform_settings",
 }
 
+USER_SECURITY_COLUMNS = {
+    "must_change_password",
+    "temporary_password_expires_at",
+    "password_changed_at",
+    "last_login_at",
+}
+
+STORE_PUBLIC_COLUMNS = {
+    "whatsapp_phone",
+    "social_links",
+}
+
 
 def test_db_schema_is_lowercase_marketplace():
     settings = get_settings()
@@ -61,6 +73,18 @@ def test_all_orm_tables_bound_only_to_marketplace():
         assert key.startswith(f"{EXPECTED_SCHEMA}."), (
             f"metadata key debe ser '{EXPECTED_SCHEMA}.…', got {key!r}"
         )
+
+
+def test_user_model_has_epica_usuarios_password_state_columns():
+    users = Base.metadata.tables[f"{EXPECTED_SCHEMA}.users"]
+    missing = USER_SECURITY_COLUMNS - set(users.columns.keys())
+    assert not missing, f"Faltan columnas de seguridad de usuarios: {sorted(missing)}"
+
+
+def test_store_model_has_epica_tiendas_public_profile_columns():
+    stores = Base.metadata.tables[f"{EXPECTED_SCHEMA}.stores"]
+    missing = STORE_PUBLIC_COLUMNS - set(stores.columns.keys())
+    assert not missing, f"Faltan columnas publicas de tiendas: {sorted(missing)}"
 
 
 def test_compiled_ddl_targets_marketplace_not_public():

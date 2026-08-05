@@ -1,8 +1,12 @@
 """
 sync_docs.py — Genera openapi.json y API_REFERENCE.md desde el spec en runtime.
 
-Ejecutar desde la raíz de Kronox-api/:
+Ejecutar desde la raíz de sesingular-backend/:
     python scripts/sync_docs.py
+
+Escribe en:
+  - sesingular-backend/docs/
+  - sesingular-Frontend/docs/APIS/
 """
 
 import json
@@ -25,19 +29,17 @@ for _stream in (sys.stdout, sys.stderr):
 # Rutas de destino
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
-API_ROOT = SCRIPT_DIR.parent                         # Kronox-api/
-FRONTEND_DOCS = API_ROOT.parent / "Kronox-frontend" / "docs" / "APIS"
-IRIS_DOCS = API_ROOT.parent / "Iris" / "Docs" / "APIS"
+API_ROOT = SCRIPT_DIR.parent  # sesingular-backend/
+REPO_ROOT = API_ROOT.parent  # Singular/
+FRONTEND_DOCS = REPO_ROOT / "sesingular-Frontend" / "docs" / "APIS"
 
 DEST_JSON = [
     API_ROOT / "docs" / "openapi.json",
     FRONTEND_DOCS / "openapi.json",
-    IRIS_DOCS / "openapi.json",
 ]
 DEST_MD = [
     API_ROOT / "docs" / "API_REFERENCE.md",
     FRONTEND_DOCS / "API_REFERENCE.md",
-    IRIS_DOCS / "API_REFERENCE.md",
 ]
 
 
@@ -62,28 +64,51 @@ def _ensure_dirs(*paths: Path) -> None:
 # Paso 1 — Obtener el spec OpenAPI desde la app en runtime
 # ---------------------------------------------------------------------------
 
+def _patch_create_engine() -> None:
+    """
+    Evita inicializar el driver de Postgres al importar la app.
+
+    OpenAPI se genera solo desde routers/schemas de FastAPI (el contrato que
+    se despliega). No se consulta la base de datos. create_engine se ejecuta
+    al importar app.db.session y aquí puede fallar psycopg/libpq; devolvemos
+    un engine SQLite local solo como stub de import — Settings/.env siguen
+    siendo los de Singular y las rutas exportadas son las de app.main.
+    """
+    import sqlalchemy
+
+    real_create_engine = sqlalchemy.create_engine
+
+    def _stub_create_engine(_url, **kwargs):
+        # Ignora la URL real; no se conecta a producción ni a local.
+        kwargs.pop("pool_pre_ping", None)
+        return real_create_engine("sqlite+pysqlite:///:memory:")
+
+    sqlalchemy.create_engine = _stub_create_engine  # type: ignore[assignment]
+
+
 def load_openapi_spec() -> dict | None:
     print("\n[1/4] Cargando spec OpenAPI desde app.main …")
     try:
-        # Asegura que el CWD (Kronox-api/) está en sys.path
+        # CWD debe ser sesingular-backend/ para que Settings cargue .env real
+        os.chdir(API_ROOT)
+
         api_root_str = str(API_ROOT)
         if api_root_str not in sys.path:
             sys.path.insert(0, api_root_str)
 
-        # Settings exige DATABASE_URL* al importar la app. Para exportar OpenAPI
-        # no se necesita una BD real: si no hay .env, usamos placeholders.
-        os.environ.setdefault(
-            "DATABASE_URL",
-            "postgresql+asyncpg://sync_docs:sync_docs@127.0.0.1:5432/kronox",
-        )
-        os.environ.setdefault(
-            "DATABASE_URL_ALEMBIC",
-            "postgresql://sync_docs:sync_docs@127.0.0.1:5432/kronox",
-        )
+        _patch_create_engine()
 
         from app.main import app  # noqa: PLC0415
+        from app.core.config import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        _ok(
+            f"App: {settings.app_name} v{app.version} — "
+            f"prefix /{settings.api_prefix.strip('/')}"
+        )
+
         spec = app.openapi()
-        _ok(f"Spec cargado — {len(spec.get('paths', {}))} rutas encontradas")
+        _ok(f"Spec cargado — {len(spec.get('paths', {}))} rutas (contrato desplegable)")
         return spec
     except Exception as exc:
         _fail("No se pudo cargar el spec", exc)
@@ -113,7 +138,7 @@ def _resolve_ref(ref: str, components: dict) -> dict:
     """Resuelve una $ref simple del tipo #/components/schemas/Foo."""
     parts = ref.lstrip("#/").split("/")
     node: dict = {"components": components}
-    for part in parts[1:]:          # salta "components"
+    for part in parts[1:]:  # salta "components"
         node = node.get(part, {})
     return node
 
@@ -228,7 +253,6 @@ def _collect_errors(operation: dict) -> list[list[str]]:
 
 def build_markdown(spec: dict) -> str:
     components = spec.get("components", {})
-    schemas = components.get("schemas", {})
     info = spec.get("info", {})
 
     lines: list[str] = [
@@ -398,7 +422,7 @@ def write_markdown(spec: dict) -> None:
 
 def main() -> None:
     print("=" * 60)
-    print("  sync_docs.py — Kronox API documentation sync")
+    print("  sync_docs.py — Singular API documentation sync")
     print("=" * 60)
 
     spec = load_openapi_spec()

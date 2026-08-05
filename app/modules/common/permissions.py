@@ -7,13 +7,14 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models import Store, StoreMember, User
 from app.models.user import UserRole
-from app.modules.auth.deps import get_current_user
+from app.modules.auth.deps import ensure_password_change_completed, get_current_user
 
 
 def require_role(*roles: UserRole):
     """Crea una dependencia que limita una ruta a roles concretos."""
 
     def dependency(user: User = Depends(get_current_user)) -> User:
+        ensure_password_change_completed(user)
         if user.role not in roles:
             labels = ", ".join(role.value for role in roles)
             raise HTTPException(status.HTTP_403_FORBIDDEN, f"Requiere rol: {labels}")

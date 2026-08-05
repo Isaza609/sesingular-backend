@@ -1,25 +1,46 @@
-### Estructura estándar
+# Reglas del agente — Singular Backend
 
-`app/modules/{modulo}/` con `router.py`, `service.py`, `schemas.py` y `models.py`.
-Separación de capas: todo módulo nuevo sigue model → schemas → repository → service → router. 
+Backend FastAPI del marketplace Singular (productos físicos).
+Fuente de verdad funcional: `docs/Historias de usuario.md` (cada título `Epica:` define una épica y sus HUs).
+Fuente de verdad técnica de la API: Swagger (`/docs`) — lo que está en el código es lo que se exporta con `sync_docs.py`.
+Documentación siempre en español.
+NO TOCAR SESINGULAR FRONTEND, TODO DESARROLLO VA A EN EL BACKEND
 
-### Registro y auditoría
+---
 
-- Registrar routers en `app/main.py` al final de la lista.
-- Toda operación de escritura (POST, PUT, DELETE) debe registrarse usando `app/common/audit.py`.
+## Estructura estándar
 
-En español la documentacion
+`app/modules/{modulo}/` con `router.py`, `service.py`, `schemas.py` (y `models` en `app/models/` cuando aplique).
+Separación de capas: todo módulo nuevo sigue model → schemas → service → router.
+
+### Registro
+
+- Registrar routers nuevos en `app/main.py`.
+- Operaciones de escritura relevantes deben dejar trazabilidad cuando el dominio lo exija (p. ej. movimientos de inventario, cambios de estado de pedido/pago).
+
+---
 
 ## Terminal y entorno virtual
 
 - La terminal siempre opera dentro del entorno virtual.
 - Verificar que esté activo antes de ejecutar cualquier comando.
 - Para activarlo: `.venv\Scripts\activate` (Windows).
+- Ejecutar comandos desde la raíz de `sesingular-backend/`.
 
-## Seguridad y multi-tenancy
+---
 
-- Nunca exponer datos fuera del scope del tenant del usuario autenticado.
-- Siempre validar que el usuario autenticado tiene permiso sobre el recurso solicitado.
+## Seguridad y scope
+
+- Autenticación: `Authorization: Bearer <JWT Supabase>`.
+- Roles: `buyer`, `seller`, `admin`.
+- Nunca exponer datos fuera del scope del usuario autenticado:
+  - comprador → solo lo suyo;
+  - vendedor / equipo → solo recursos de su tienda;
+  - admin → alcance de plataforma.
+- Siempre validar rol y pertenencia a la tienda (o recurso) antes de leer o escribir.
+- Usar `app/modules/auth/deps.py` y `app/modules/common/permissions.py`.
+
+---
 
 ## Estándares de documentación Swagger en código
 
@@ -27,75 +48,108 @@ Todo endpoint nuevo debe cumplir estos estándares sin excepción.
 El Swagger (`/docs`) es la fuente de verdad técnica — lo que está en el código es lo que se exporta.
 Ambos deben estar siempre sincronizados.
 
-## Checklist por endpoint
+### Checklist por endpoint
 
 Antes de ejecutar `sync_docs.py`, verificar que cada endpoint cumple:
 
-- [ ] `summary` en una línea, verbo en infinitivo ("Crear alerta", "Listar vehículos")
-- [ ] `description` con rol permitido, HU relacionada y comportamiento especial
+- [ ] `summary` en una línea, verbo en infinitivo ("Crear producto", "Listar pedidos")
+- [ ] `description` con rol permitido, HU relacionada (`HU-XXX-NN`) y comportamiento especial
 - [ ] `response_description` describiendo qué retorna en éxito
 - [ ] `response_model` tipado en el decorador
 - [ ] `status_code` explícito
-- [ ] `responses` con todos los códigos de error posibles (400, 401, 403, 404, 409, 502 según aplique)
+- [ ] `responses` con todos los códigos de error posibles (400, 401, 403, 404, 409, 422, 502 según aplique)
 - [ ] Schema de request con `Field(description=..., example=...)` en cada campo
 - [ ] Schema de response con `Field(description=..., example=...)` en cada campo
 - [ ] `model_config` con `json_schema_extra.example` completo y realista en el schema de request
 
-# 5. Documentación de épica — Registro acumulativo por módulo
+---
 
-### 5.1 Propósito
+## Documentación de épica — Registro acumulativo
 
-El documento de épica es el único registro técnico y funcional de todo lo que se desarrolló en un módulo. Cumple dos funciones a la vez:
+### Propósito
+
+El documento de épica es el único registro técnico y funcional de todo lo que se desarrolló en esa épica. Cumple dos funciones a la vez:
 
 - **Registro funcional:** qué se implementó, cuándo, cómo se cumplieron los criterios de aceptación.
 - **Contrato de API:** descripción completa de endpoints para que frontend los integre sin necesidad de abrir el Swagger.
 
 No es un documento puntual. Es un historial vivo que crece con cada HU implementada. No se elimina ni se reescribe — solo se agrega al final.
 
-### 5.2 Ubicación y nombre
+### Ubicación y nombre
+
+Dentro de `docs/` se crea **una carpeta por épica**. Dentro, un único archivo de documentación completa:
 
 ```
-docs/docs_plan/{Modulo}/epica_{Modulo}.md
+docs/{Epica}/epica_{Epica}.md
 ```
 
-Ejemplo: `docs/docs_plan/Alertas/epica_Alertas.md`
+Mapeo (título en `Historias de usuario.md` → carpeta):
 
-Un solo archivo por módulo. Nunca crear un archivo por HU ni por sprint.
+| Epica (en HU) | Carpeta / archivo |
+| --- | --- |
+| Epica 01: Gestión de usuarios | `docs/Usuarios/epica_Usuarios.md` |
+| Epica 02: Gestión de tiendas (vendedores) | `docs/Tiendas/epica_Tiendas.md` |
+| Epica 03: Gestión de categorías y catálogo | `docs/Categorias/epica_Categorias.md` |
+| Epica 04: Gestión de productos | `docs/Productos/epica_Productos.md` |
+| Epica 05: Gestión de precios y promociones | `docs/PreciosPromociones/epica_PreciosPromociones.md` |
+| Epica 06: Gestión de inventario | `docs/Inventario/epica_Inventario.md` |
+| Epica 07: Canal de venta (online / presencial) | `docs/CanalVenta/epica_CanalVenta.md` |
+| Epica 08: Búsqueda y navegación (comprador) | `docs/Busqueda/epica_Busqueda.md` |
+| Epica 09: Carrito y checkout | `docs/CarritoCheckout/epica_CarritoCheckout.md` |
+| Epica 10: Pagos | `docs/Pagos/epica_Pagos.md` |
+| Epica 11: Facturación al comprador | `docs/Facturacion/epica_Facturacion.md` |
+| Epica 12: Gestión de pedidos | `docs/Pedidos/epica_Pedidos.md` |
+| Epica 13: Envíos y entregas | `docs/Envios/epica_Envios.md` |
+| Epica 14: Reputación y confianza | `docs/Reputacion/epica_Reputacion.md` |
+| Epica 15: Panel del vendedor | `docs/PanelVendedor/epica_PanelVendedor.md` |
+| Epica 16: Panel de administración (plataforma) | `docs/PanelAdmin/epica_PanelAdmin.md` |
 
-### 5.3 Cuándo actualizar
+Un solo archivo por épica. Nunca crear un archivo por HU ni por sprint.
+Si la carpeta no existe, crearla al documentar la primera HU de esa épica.
+
+### Cuándo actualizar
 
 Cada vez que se implementa una HU, agregar su bloque al final del documento y actualizar el índice.
 No reescribir secciones anteriores salvo que una HU posterior corrija explícitamente algo anterior
 (en ese caso anotar la corrección con fecha, no borrar el registro original).
 
-### 5.4 Estructura del documento de épica
+### Validación por HU
 
-```markdown
-# Épica {ID} — {Nombre del Módulo}
+Antes y al cerrar una implementación:
 
-**Módulo:** {nombre}
-**Épica ID:** {ej. 08}
-**Swagger tag:** `{Modulo}`
-**Prefijo de rutas:** `/api/v1/{modulo}`
-**Autenticación:** `Authorization: Bearer <JWT Supabase>` (requerido en todos los endpoints)
-**Scope:** Multi-tenant — todos los recursos filtrados por el tenant del usuario autenticado.
+1. Ubicar la **Epica** y la HU en `docs/Historias de usuario.md`.
+2. Cumplir **todos** los criterios de aceptación de esa HU.
+3. Documentar en el archivo de la épica cómo se cumplió cada criterio (tabla del bloque HU).
+4. Referenciar la HU (`HU-XXX-NN`) en la `description` de cada endpoint tocado.
+5. No marcar la HU como implementada si falta un criterio o se inventó comportamiento no documentado.
+
+### Estructura del documento de épica
+
+````markdown
+# Epica {NN}: {Nombre}
+
+**Épica ID:** {ej. 10}
+**Módulo / prefijo HU:** {ej. PAG}
+**Swagger tag:** `{Tag}`
+**Prefijo de rutas:** `/api/v1/{ruta}`
+**Autenticación:** `Authorization: Bearer <JWT Supabase>` (según endpoint; indicar si es público)
+**Scope:** comprador / tienda del vendedor / plataforma (admin)
 **Última actualización:** {fecha}
 
 ---
 
 ## Resumen del módulo
 
-Descripción general de qué resuelve este módulo, qué entidades maneja,
-qué roles intervienen y cuál es su relación con Traccar (si aplica).
+Descripción general de qué resuelve esta épica, qué entidades maneja
+y qué roles intervienen.
 
 ---
 
 ## Índice de HUs implementadas
 
-| HU | Título | Fecha | Endpoints |
-|---|---|---|---|
-| HU-08-01 | Listar alertas | 2026-05-10 | `GET /api/v1/alertas` |
-| HU-08-02 | Crear alerta | 2026-05-15 | `POST /api/v1/alertas/` |
+| HU | Título | Fecha | Endpoints | Tests |
+|---|---|---|---|---|
+| HU-PAG-01 | Selección del método de pago | 2026-08-05 | `GET /api/v1/...` | `tests/test_pag_01.py` |
 
 ---
 
@@ -104,8 +158,9 @@ qué roles intervienen y cuál es su relación con Traccar (si aplica).
 ## HU-{ID} · {Título}
 
 **Fecha de implementación:** {fecha}
-**Fecha HU en docs_plan:** {fecha extraída del archivo HU_{Modulo}.md}
+**HU en:** `docs/Historias de usuario.md`
 **Estado:** Implementada
+**Tests:** `tests/...` (obligatorio)
 
 ### Descripción funcional
 
@@ -116,21 +171,20 @@ Contexto de negocio relevante para entender los endpoints.
 
 | # | Criterio | Cumplido | Cómo se cumplió |
 |---|---|---|---|
-| 1 | {criterio} | ✅ | {explicación técnica de cómo lo cumple la implementación} |
+| 1 | {criterio tomado de la HU} | ✅ | {explicación técnica de cómo lo cumple la implementación} |
 | 2 | {criterio} | ✅ | {explicación} |
 
 ### Flujo implementado
 
 Descripción del flujo completo en orden de ejecución.
-Si involucra varios endpoints o una saga Kronox ↔ Traccar, describirlo paso a paso.
+Si involucra varios endpoints o servicios externos (pasarela, correo, storage), describirlo paso a paso.
 
 ```
-1. Frontend llama POST /api/v1/alertas/ con body {…}
-2. Service valida que el tenant tenga permiso
-3. Se crea el registro en kronox.fleet_alerts
-4. Se replica en Traccar vía client.py → POST /api/notifications
-5. Si Traccar falla → rollback en Kronox (DELETE fleet_alerts)
-6. Retorna el objeto creado con su ID
+1. Frontend llama POST /api/v1/... con body {…}
+2. Service valida rol y scope (tienda / comprador)
+3. Se persiste en marketplace.{tabla}
+4. Efectos colaterales (reserva de stock, notificación, etc.)
+5. Retorna el objeto creado con su ID
 ```
 
 ### Endpoints implementados en esta HU
@@ -140,7 +194,7 @@ Si involucra varios endpoints o una saga Kronox ↔ Traccar, describirlo paso a 
 #### {MÉTODO} `/api/v1/{ruta}` → {código HTTP exitoso}
 
 **Descripción:** Qué hace, para qué rol aplica, comportamiento especial.
-**Roles permitidos:** `admin_cliente`, `usuario_final`
+**Roles permitidos:** `buyer`, `seller`, `admin` (los que apliquen)
 **Archivo:** `app/modules/{modulo}/router.py`
 
 **Headers requeridos:**
@@ -157,70 +211,101 @@ Si involucra varios endpoints o una saga Kronox ↔ Traccar, describirlo paso a 
 **Request body:** *(omitir si no aplica)*
 ```json
 {
-  "nombre": "Alerta velocidad",
-  "tipo": "speed",
-  "limite_velocidad": 80,
-  "vehiculo_ids": [1, 2, 3]
+  "campo": "ejemplo realista del dominio"
 }
 ```
 
 | Campo | Tipo | Req/Opt | Descripción |
 |---|---|---|---|
-| `nombre` | `string` | requerido | Nombre descriptivo de la alerta. Único por tenant. |
-| `tipo` | `enum` | requerido | Valores: `speed`, `geofence`, `ignition` |
-| `limite_velocidad` | `int` | opcional | Solo si `tipo = speed`. En km/h. |
-| `vehiculo_ids` | `int[]` | requerido | IDs de vehículos Kronox a asociar. |
+| `campo` | `string` | requerido | Descripción del campo |
 
 **Response exitosa:**
 ```json
 {
-  "id": 42,
-  "nombre": "Alerta velocidad",
-  "tipo": "speed",
-  "limite_velocidad": 80,
-  "vehiculos": [
-    { "id": 1, "placa": "ABC-123" }
-  ],
-  "creado_en": "2026-05-15T10:32:00Z"
+  "id": "...",
+  "campo": "valor"
 }
 ```
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| `id` | `int` | ID interno Kronox |
-| `nombre` | `string` | Nombre de la alerta |
-| `vehiculos` | `object[]` | Lista de vehículos asociados |
-| `creado_en` | `datetime` | ISO 8601 UTC |
+| `id` | `string` / `uuid` | Identificador |
+| `campo` | `string` | Descripción |
 
 **Errores posibles:**
 | Código | Situación | Mensaje típico |
 |---|---|---|
-| 400 | Datos inválidos o regla de negocio violada | `"limite_velocidad requerido cuando tipo es speed"` |
+| 400 | Datos inválidos o regla de negocio violada | `"…"` |
 | 401 | Sin autenticación | `"Token inválido o expirado"` |
-| 403 | Rol no permitido | `"El rol del usuario no tiene acceso a esta operación"` |
-| 404 | Recurso no encontrado | `"Vehículo 99 no encontrado en este tenant"` |
-| 409 | Conflicto | `"Ya existe una alerta con ese nombre en este tenant"` |
+| 403 | Rol o tienda no permitidos | `"…"` |
+| 404 | Recurso no encontrado | `"…"` |
+| 409 | Conflicto | `"…"` |
 | 422 | Validación Pydantic | Array `detail` estándar de FastAPI |
-| 502 | Fallo Traccar | `"No se pudo crear la notificación en Traccar"` |
+
+### Tests de esta HU
+
+- Archivo(s): `tests/...`
+- Qué cubren: criterios / endpoints / casos de error relevantes.
+- Cómo ejecutarlos: `pytest tests/... -v`
 
 ### Notas y advertencias para frontend
 
 Lista de aspectos críticos que frontend debe conocer para esta HU:
 - Enums aceptados, formatos de fecha, tipos de ID.
-- Campos que cambiaron respecto a Traccar (si aplica).
 - Comportamientos condicionales o efectos secundarios.
+- Campos que solo aplican según rol o modalidad (pago manual, envío a convenir, etc.).
 
 ---
 <!-- fin del bloque HU — agregar el siguiente al final del archivo -->
-```
+````
 
-### 5.5 Orden de cierre obligatorio al terminar una HU
+---
 
-Al terminar de implementar una HU, ejecutar estos tres pasos en orden. No cerrar la tarea sin haberlos completado todos.
+## Tests obligatorios por HU / épica
 
-**Paso 1 — Verificar el checklist de §6.3**
-Cada endpoint de la HU debe cumplir todos los ítems antes de continuar.
+Toda HU o épica desarrollada **debe** incluir tests. No se cierra la tarea sin ellos.
 
-**Paso 2 — Sincronizar documentación técnica**
+- Ubicación: `tests/` (pytest).
+- Nombrar de forma trazable a la HU cuando sea posible (`test_hu_pag_01_...`, o módulo claro + comentario/docstring con la HU).
+- Cubrir al menos:
+  - camino feliz de los endpoints de la HU;
+  - validaciones / errores de negocio relevantes de los criterios de aceptación;
+  - control de acceso (rol o scope de tienda) cuando aplique.
+- Ejecutar los tests de la HU antes del cierre:
+  ```bash
+  pytest tests/ -v -k "{filtro_de_la_hu_o_modulo}"
+  ```
+- Registrar la ruta de los tests en el índice y en el bloque de la HU del documento de épica.
+- Si ya existen tests del módulo, extenderlos; no dejar la HU sin cobertura nueva o actualizada.
+
+---
+
+## Orden de cierre obligatorio al terminar una HU
+
+Al terminar de implementar una HU, ejecutar estos pasos en orden. No cerrar la tarea sin haberlos completado todos.
+
+**Paso 1 — Validar criterios de aceptación**
+Contra `docs/Historias de usuario.md`, en la Epica correspondiente. Documentar el cumplimiento en el bloque HU.
+
+**Paso 2 — Verificar el checklist Swagger**
+Cada endpoint de la HU debe cumplir todos los ítems del checklist.
+
+**Paso 3 — Tests**
+Escribir/actualizar tests de la HU y ejecutarlos hasta que pasen.
+
+**Paso 4 — Sincronizar documentación técnica**
 ```bash
 python scripts/sync_docs.py
+```
+
+**Paso 5 — Actualizar documento de épica**
+Crear la carpeta `docs/{Epica}/` si no existe. Agregar el bloque de la HU al final de `epica_{Epica}.md` y actualizar el índice (incluidos tests).
+
+---
+
+## Qué no hacer
+
+- No inventar HUs, roles ni flujos fuera de `docs/Historias de usuario.md`.
+- No copiar patrones ajenos al marketplace Singular.
+- No exponer secretos, credenciales de pasarela ni claves de Supabase en docs ni en respuestas.
+- No dar por cerrada una HU sin tests, sin sync de docs y sin bloque en la carpeta de la épica.

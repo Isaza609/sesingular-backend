@@ -11,10 +11,17 @@ from app.models.user import User
 from app.modules.auth.deps import get_current_user
 from app.modules.catalog.router import _stock
 from app.modules.common.permissions import get_seller_store, require_seller
-from app.modules.inventory.schemas import MovementOut, StockOut, StockPatch, WarehouseIn, WarehousePatch
+from app.modules.inventory.schemas import MovementOut, StockOut, StockPatch, WarehouseIn, WarehouseOut, WarehousePatch
 
 seller_router = APIRouter(prefix="/seller", tags=["seller-inventory"])
 public_router = APIRouter(prefix="/catalog", tags=["catalog-inventory"])
+WAREHOUSE_RESPONSES = {
+    400: {"description": "Almacen inactivo o regla de negocio no permitida."},
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol seller o cambio de contrasena pendiente."},
+    404: {"description": "Almacen o recurso no encontrado en la tienda."},
+    422: {"description": "Validacion Pydantic."},
+}
 
 
 def _warehouse(store_id: str, warehouse_id: str, db: Session) -> Warehouse:
@@ -22,6 +29,31 @@ def _warehouse(store_id: str, warehouse_id: str, db: Session) -> Warehouse:
     if warehouse is None or warehouse.store_id != store_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Almacén no encontrado")
     return warehouse
+
+
+def _active_warehouse(store_id: str, warehouse_id: str, db: Session) -> Warehouse:
+    warehouse = _warehouse(store_id, warehouse_id, db)
+    if not warehouse.active:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El almacen esta inactivo y no admite nuevas operaciones")
+    return warehouse
+
+
+def _requires_manual_dispatch_selection(store_id: str, db: Session) -> bool:
+    active_count = db.scalar(select(func.count()).select_from(Warehouse).where(Warehouse.store_id == store_id, Warehouse.active.is_(True))) or 0
+    return active_count > 1
+
+
+def _warehouse_out(row: Warehouse, requires_manual_dispatch_selection: bool) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "address_line": row.address_line,
+        "city": row.city,
+        "region": row.region,
+        "is_default": row.is_default,
+        "active": row.active,
+        "requires_manual_dispatch_selection": requires_manual_dispatch_selection,
+    }
 
 
 def _stock_out(row: StockLevel) -> dict:
@@ -49,24 +81,53 @@ def public_variant_stock(variant_id: str, db: Session = Depends(get_db)):
     return {"variant_id": variant.id, "stock": _stock(variant), "available": _stock(variant) > 0}
 
 
-@seller_router.get("/warehouses")
+@seller_router.get(
+    "/warehouses",
+    response_model=list[WarehouseOut],
+    status_code=status.HTTP_200_OK,
+    summary="Listar almacenes",
+    description="Rol permitido: seller. HU-TDA-02. Lista puntos o almacenes activos e inactivos de la tienda autenticada.",
+    response_description="Almacenes de la tienda con indicador de seleccion manual de despacho.",
+    responses=WAREHOUSE_RESPONSES,
+)
 def list_warehouses(store=Depends(get_seller_store), db: Session = Depends(get_db)):
     rows = db.scalars(select(Warehouse).where(Warehouse.store_id == store.id).order_by(Warehouse.is_default.desc(), Warehouse.name)).all()
-    return [{"id": row.id, "name": row.name, "address_line": row.address_line, "city": row.city, "region": row.region, "is_default": row.is_default, "active": row.active} for row in rows]
+    requires_manual = _requires_manual_dispatch_selection(store.id, db)
+    return [_warehouse_out(row, requires_manual) for row in rows]
 
 
-@seller_router.post("/warehouses", status_code=status.HTTP_201_CREATED)
+@seller_router.post(
+    "/warehouses",
+    response_model=WarehouseOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear almacen",
+    description="Rol permitido: seller. HU-TDA-02. Registra un punto o almacen de la tienda para asociarle stock.",
+    response_description="Almacen creado y disponible segun su estado activo.",
+    responses=WAREHOUSE_RESPONSES,
+)
 def create_warehouse(body: WarehouseIn, store=Depends(get_seller_store), db: Session = Depends(get_db)):
-    if body.is_default:
+    active_count = db.scalar(select(func.count()).select_from(Warehouse).where(Warehouse.store_id == store.id, Warehouse.active.is_(True))) or 0
+    values = body.model_dump()
+    if values["active"] and active_count == 0:
+        values["is_default"] = True
+    if values["is_default"]:
         db.query(Warehouse).filter(Warehouse.store_id == store.id).update({Warehouse.is_default: False})
-    warehouse = Warehouse(store_id=store.id, **body.model_dump())
+    warehouse = Warehouse(store_id=store.id, **values)
     db.add(warehouse)
     db.commit()
     db.refresh(warehouse)
-    return {"id": warehouse.id, **body.model_dump()}
+    return _warehouse_out(warehouse, _requires_manual_dispatch_selection(store.id, db))
 
 
-@seller_router.patch("/warehouses/{warehouse_id}")
+@seller_router.patch(
+    "/warehouses/{warehouse_id}",
+    response_model=WarehouseOut,
+    status_code=status.HTTP_200_OK,
+    summary="Actualizar almacen",
+    description="Rol permitido: seller. HU-TDA-02. Actualiza o desactiva un almacen sin afectar pedidos ni movimientos historicos.",
+    response_description="Almacen actualizado.",
+    responses=WAREHOUSE_RESPONSES,
+)
 def patch_warehouse(warehouse_id: str, body: WarehousePatch, store=Depends(get_seller_store), db: Session = Depends(get_db)):
     warehouse = _warehouse(store.id, warehouse_id, db)
     values = body.model_dump(exclude_unset=True)
@@ -76,7 +137,7 @@ def patch_warehouse(warehouse_id: str, body: WarehousePatch, store=Depends(get_s
         setattr(warehouse, key, value)
     db.commit()
     db.refresh(warehouse)
-    return {"id": warehouse.id, "name": warehouse.name, "address_line": warehouse.address_line, "city": warehouse.city, "region": warehouse.region, "is_default": warehouse.is_default, "active": warehouse.active}
+    return _warehouse_out(warehouse, _requires_manual_dispatch_selection(store.id, db))
 
 
 @seller_router.get("/inventory", response_model=list[StockOut])
@@ -99,7 +160,7 @@ def adjust_inventory(variant_id: str, body: StockPatch, store=Depends(get_seller
     variant = db.get(ProductVariant, variant_id)
     if variant is None or variant.product.store_id != store.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Variante no encontrada")
-    warehouse = _warehouse(store.id, body.warehouse_id, db)
+    warehouse = _active_warehouse(store.id, body.warehouse_id, db)
     row = db.scalar(select(StockLevel).where(StockLevel.variant_id == variant_id, StockLevel.warehouse_id == warehouse.id).with_for_update())
     previous = row.quantity if row else 0
     if row is None:

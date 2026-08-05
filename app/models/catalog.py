@@ -125,6 +125,9 @@ class ProductVariant(Base):
     price: Mapped[int] = mapped_column(Integer, nullable=False)
     compare_at: Mapped[int | None] = mapped_column(Integer)
     cost: Mapped[int | None] = mapped_column(Integer)
+    special_price: Mapped[int | None] = mapped_column(Integer)
+    special_starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    special_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -134,6 +137,7 @@ class ProductVariant(Base):
     product = relationship("Product", back_populates="variants")
     stock_levels = relationship("StockLevel", back_populates="variant")
     movements = relationship("InventoryMovement", back_populates="variant")
+    images = relationship("ProductImage", back_populates="variant")
 
 
 class ProductImage(Base):
@@ -143,9 +147,13 @@ class ProductImage(Base):
     product_id: Mapped[str] = mapped_column(
         String(36), ForeignKey(f"{SCHEMA}.products.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    variant_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.product_variants.id", ondelete="CASCADE"), index=True
+    )
     url: Mapped[str] = mapped_column(String(500), nullable=False)
     alt: Mapped[str | None] = mapped_column(String(200))
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     product = relationship("Product", back_populates="images")
+    variant = relationship("ProductVariant", back_populates="images")

@@ -8,18 +8,20 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Address, Cart, CartItem, Coupon, Favorite, Order, OrderItem, Payment, PayoutAccount, PlatformSetting, Product, ProductVariant, Store, StoreMember, Warehouse
+from app.models import Address, Cart, CartItem, Coupon, Favorite, Order, OrderAdjustment, OrderItem, Payment, PayoutAccount, PlatformSetting, Product, ProductVariant, Store, StoreMember, Warehouse
 from app.models.catalog import ProductStatus
-from app.models.order import OrderStatus, SaleChannel
+from app.models.order import OrderAdjustmentKind, OrderStatus, SaleChannel
 from app.models.payment import PaymentStatus
 from app.modules.auth.deps import get_current_user
 from app.models.user import User
-from app.modules.catalog.router import _product_out
+from app.models.payout import PayoutAccountType
+from app.modules.catalog.router import _product_out, payment_options_for_store
 from app.modules.common import mailer
 from app.modules.common.permissions import get_seller_store, require_buyer
 from app.modules.common.storage import signed_url, upload_receipt
 from app.modules.inventory.service import release_order, reserve_variant
-from app.modules.orders.schemas import AddressIn, AddressPatch, CartItemIn, CartItemPatch, CheckoutIn, CartOut, OrderOut, OrderStatusPatch, WarehouseAssign
+from app.modules.orders.schemas import AddressIn, AddressOut, AddressPatch, CartItemIn, CartItemPatch, CheckoutIn, CheckoutQuoteOut, CartOut, OrderOut, OrderStatusPatch, WarehouseAssign
+from app.modules.pricing.service import calculate_store_pricing, effective_unit_price, priced_items_from_cart_items
 
 buyer_router = APIRouter(tags=["buyer"])
 seller_router = APIRouter(prefix="/seller", tags=["seller-orders"])
@@ -50,6 +52,17 @@ def _order_out(order: Order) -> dict:
         "notes": order.notes,
         "created_at": order.created_at,
         "items": [{"id": item.id, "variant_id": item.variant_id, "product_name": item.product_name, "sku": item.sku, "quantity": item.quantity, "unit_price": item.unit_price, "unit_cost": item.unit_cost} for item in order.items],
+        "adjustments": [
+            {
+                "kind": adjustment.kind.value,
+                "source_type": adjustment.source_type,
+                "source_id": adjustment.source_id,
+                "name": adjustment.name,
+                "amount": adjustment.amount,
+                "code": (adjustment.metadata_json or {}).get("code"),
+            }
+            for adjustment in order.adjustments
+        ],
         "payments": [{"id": payment.id, "provider": payment.provider, "method": payment.method, "status": payment.status.value, "amount": payment.amount, "currency": payment.currency} for payment in order.payments],
     }
 
@@ -73,6 +86,12 @@ def _payout_account_out(account: PayoutAccount | None) -> dict | None:
 
 
 MANUAL_METHODS = {"transfer", "breb"}
+ADDRESS_RESPONSES = {
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol buyer o recurso fuera del scope del comprador."},
+    404: {"description": "Direccion no encontrada."},
+    422: {"description": "Validacion Pydantic."},
+}
 
 
 def _payment_out(payment: Payment | None, with_receipt: bool = False) -> dict | None:
@@ -123,8 +142,13 @@ def _resolve_variant(body: CartItemIn, db: Session) -> ProductVariant:
         if body.color:
             stmt = stmt.where(ProductVariant.color == body.color)
         variant = db.scalars(stmt.order_by(ProductVariant.price)).first()
-    if variant is None or not variant.active or variant.product.status.value != "active" or not variant.product.store.active:
+    if variant is None or not variant.active or variant.product.status in (ProductStatus.draft, ProductStatus.discontinued) or not variant.product.store.active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Variante no disponible")
+    if variant.product.status == ProductStatus.out_of_stock:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Producto agotado")
+    stock = sum(max(0, level.quantity - level.reserved) for level in variant.stock_levels)
+    if stock < body.quantity:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Stock insuficiente")
     return variant
 
 
@@ -132,20 +156,38 @@ def _cart_out(cart: Cart) -> dict:
     items = []
     for item in cart.items:
         variant = item.variant
+        pricing = effective_unit_price(variant)
         stock = sum(max(0, level.quantity - level.reserved) for level in variant.stock_levels)
-        items.append({"id": item.id, "variant_id": variant.id, "product_id": variant.product_id, "slug": variant.product.slug, "name": variant.product.name, "sku": variant.sku, "color": variant.color, "image": variant.product.images[0].url if variant.product.images else None, "quantity": item.quantity, "unit_price": variant.price, "stock": stock, "store_id": variant.product.store_id, "store_name": variant.product.store.name})
+        items.append({"id": item.id, "variant_id": variant.id, "product_id": variant.product_id, "slug": variant.product.slug, "name": variant.product.name, "sku": variant.sku, "color": variant.color, "image": variant.product.images[0].url if variant.product.images else None, "quantity": item.quantity, "unit_price": pricing["price"], "regular_unit_price": pricing["regular_price"], "special_price_applied": pricing["special_price_active"], "stock": stock, "store_id": variant.product.store_id, "store_name": variant.product.store.name})
+    regular_subtotal = sum(item["quantity"] * item["regular_unit_price"] for item in items)
     subtotal = sum(item["quantity"] * item["unit_price"] for item in items)
     shipping = 0 if subtotal == 0 or subtotal >= FREE_SHIPPING else SHIPPING_COST
-    return {"id": cart.id, "items": items, "subtotal": subtotal, "shipping_cost": shipping, "tax": 0, "total": subtotal + shipping}
+    return {"id": cart.id, "items": items, "regular_subtotal": regular_subtotal, "subtotal": subtotal, "shipping_cost": shipping, "tax": 0, "total": subtotal + shipping}
 
 
-@buyer_router.get("/addresses")
+@buyer_router.get(
+    "/addresses",
+    response_model=list[AddressOut],
+    status_code=status.HTTP_200_OK,
+    summary="Listar direcciones",
+    description="Rol permitido: buyer. HU-USR-03. Lista solo las direcciones de envio del comprador autenticado.",
+    response_description="Direcciones guardadas del comprador.",
+    responses=ADDRESS_RESPONSES,
+)
 def list_addresses(user: User = Depends(require_buyer), db: Session = Depends(get_db)):
     rows = db.scalars(select(Address).where(Address.user_id == user.id).order_by(Address.is_default.desc(), Address.created_at.desc())).all()
     return [_address_out(row) for row in rows]
 
 
-@buyer_router.post("/addresses", status_code=status.HTTP_201_CREATED)
+@buyer_router.post(
+    "/addresses",
+    response_model=AddressOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear direccion",
+    description="Rol permitido: buyer. HU-USR-03. Crea una direccion de envio asociada al comprador autenticado.",
+    response_description="Direccion creada y disponible para checkout.",
+    responses=ADDRESS_RESPONSES,
+)
 def create_address(body: AddressIn, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
     if body.is_default:
         db.query(Address).filter(Address.user_id == user.id).update({Address.is_default: False})
@@ -156,7 +198,15 @@ def create_address(body: AddressIn, user: User = Depends(require_buyer), db: Ses
     return _address_out(address)
 
 
-@buyer_router.patch("/addresses/{address_id}")
+@buyer_router.patch(
+    "/addresses/{address_id}",
+    response_model=AddressOut,
+    status_code=status.HTTP_200_OK,
+    summary="Actualizar direccion",
+    description="Rol permitido: buyer. HU-USR-03. Actualiza solo una direccion propia del comprador autenticado.",
+    response_description="Direccion actualizada.",
+    responses=ADDRESS_RESPONSES,
+)
 def patch_address(address_id: str, body: AddressPatch, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
     address = db.get(Address, address_id)
     if address is None or address.user_id != user.id:
@@ -171,7 +221,14 @@ def patch_address(address_id: str, body: AddressPatch, user: User = Depends(requ
     return _address_out(address)
 
 
-@buyer_router.delete("/addresses/{address_id}", status_code=status.HTTP_204_NO_CONTENT)
+@buyer_router.delete(
+    "/addresses/{address_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Eliminar direccion",
+    description="Rol permitido: buyer. HU-USR-03. Elimina solo una direccion propia del comprador autenticado.",
+    response_description="Direccion eliminada sin contenido.",
+    responses=ADDRESS_RESPONSES,
+)
 def delete_address(address_id: str, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
     address = db.get(Address, address_id)
     if address is None or address.user_id != user.id:
@@ -283,20 +340,75 @@ def _shipping_config(store_id: str, db: Session) -> tuple[int, int]:
     return int(config.get("shipping_flat_cost", SHIPPING_COST)), int(config.get("shipping_free_threshold", FREE_SHIPPING))
 
 
-@buyer_router.post("/checkout/quote")
+def _pricing_for_cart(cart: Cart, coupon_code: str | None, db: Session) -> list[dict]:
+    groups: dict[str, list[CartItem]] = defaultdict(list)
+    for item in cart.items:
+        groups[item.variant.product.store_id].append(item)
+
+    results: list[dict] = []
+    for store_id, items in groups.items():
+        priced_items = priced_items_from_cart_items(items)
+        first_pass = calculate_store_pricing(
+            store_id=store_id,
+            priced_items=priced_items,
+            db=db,
+            coupon_code=coupon_code,
+            shipping_cost=0,
+        )
+        flat_shipping, free_threshold = _shipping_config(store_id, db)
+        shipping = 0 if first_pass["subtotal_after_discounts"] >= free_threshold else flat_shipping
+        results.append(
+            calculate_store_pricing(
+                store_id=store_id,
+                priced_items=priced_items,
+                db=db,
+                coupon_code=coupon_code,
+                shipping_cost=shipping,
+            )
+        )
+    return results
+
+
+@buyer_router.post(
+    "/checkout/quote",
+    response_model=CheckoutQuoteOut,
+    status_code=status.HTTP_200_OK,
+    summary="Cotizar checkout",
+    description="Rol permitido: buyer. HU-PROM-01, HU-PROM-02 y HU-PROM-04. Calcula precios efectivos, descuentos, cupones, cargos extra desglosados y envio antes de crear pedidos.",
+    response_description="Cotizacion del checkout con descuentos y cargos separados.",
+    responses={400: {"description": "Cupon invalido o expirado."}, 401: {"description": "Token requerido o invalido."}, 403: {"description": "Requiere rol buyer."}, 422: {"description": "Validacion Pydantic."}},
+)
 def checkout_quote(body: dict, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
     cart = _get_cart(user, db)
-    data = _cart_out(cart)
-    groups = defaultdict(int)
-    for item in data["items"]:
-        groups[item["store_id"]] += item["quantity"] * item["unit_price"]
-    discount = sum(_coupon_discount(body.get("coupon_code"), subtotal, store_id, db) for store_id, subtotal in groups.items())
-    subtotal = data["subtotal"] - discount
-    shipping = sum(0 if subtotal >= _shipping_config(store_id, db)[1] else _shipping_config(store_id, db)[0] for store_id, subtotal in groups.items())
-    return {"subtotal": subtotal, "discount": discount, "shipping_cost": shipping, "tax": 0, "total": subtotal + shipping, "currency": "COP"}
+    results = _pricing_for_cart(cart, body.get("coupon_code"), db)
+    discounts = [line for result in results for line in result["discounts"]]
+    extra_charges = [line for result in results for line in result["extra_charges"]]
+    subtotal = sum(result["subtotal_after_discounts"] for result in results)
+    shipping = sum(result["shipping_cost"] for result in results)
+    extra_charge_total = sum(result["extra_charge_total"] for result in results)
+    return {
+        "subtotal": subtotal,
+        "regular_subtotal": sum(result["regular_subtotal"] for result in results),
+        "discount": sum(result["discount"] for result in results),
+        "discounts": discounts,
+        "extra_charge_total": extra_charge_total,
+        "extra_charges": extra_charges,
+        "shipping_cost": shipping,
+        "tax": 0,
+        "total": subtotal + extra_charge_total + shipping,
+        "currency": "COP",
+    }
 
 
-@buyer_router.post("/checkout", response_model=dict, status_code=status.HTTP_201_CREATED)
+@buyer_router.post(
+    "/checkout",
+    response_model=dict,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear checkout",
+    description="Rol permitido: buyer. HU-PROM-01, HU-PROM-02 y HU-PROM-04. Crea pedidos usando precio efectivo, promociones, cupones vigentes y cargos extra desglosados por tienda.",
+    response_description="Pedidos creados con pagos pendientes y ajustes historicos.",
+    responses={400: {"description": "Carrito vacio, cupon invalido o metodo de pago no disponible."}, 401: {"description": "Token requerido o invalido."}, 403: {"description": "Direccion fuera del comprador."}, 409: {"description": "Stock insuficiente."}, 422: {"description": "Validacion Pydantic."}},
+)
 def checkout(body: CheckoutIn, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
     cart = _get_cart(user, db)
     if not cart.items:
@@ -312,25 +424,39 @@ def checkout(body: CheckoutIn, user: User = Depends(require_buyer), db: Session 
         db.flush()
     if address is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Dirección inválida")
-    groups: dict[str, list[CartItem]] = defaultdict(list)
-    for item in cart.items:
-        groups[item.variant.product.store_id].append(item)
+    pricing_results = _pricing_for_cart(cart, body.coupon_code, db)
     created: list[Order] = []
     try:
         commission_setting = db.get(PlatformSetting, "commission")
         commission_pct = int((commission_setting.value if commission_setting else {}).get("value", 0))
-        for store_id, items in groups.items():
-            subtotal_before = sum(item.quantity * item.variant.price for item in items)
-            discount = _coupon_discount(body.coupon_code, subtotal_before, store_id, db)
-            subtotal = subtotal_before - discount
-            flat_shipping, free_threshold = _shipping_config(store_id, db)
-            shipping = 0 if subtotal >= free_threshold else flat_shipping
-            order = Order(store_id=store_id, buyer_id=user.id, address_id=address.id, channel=SaleChannel.online, status=OrderStatus.pending, subtotal=subtotal, shipping_cost=shipping, tax=0, total=subtotal + shipping, notes=body.notes)
+        for result in pricing_results:
+            store_id = result["store_id"]
+            subtotal = result["subtotal_after_discounts"]
+            shipping = result["shipping_cost"]
+            payment_options = payment_options_for_store(store_id, db)
+            if body.payment_method not in payment_options["payment_methods"]:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Metodo de pago no disponible para esta tienda")
+            order = Order(store_id=store_id, buyer_id=user.id, address_id=address.id, channel=SaleChannel.online, status=OrderStatus.pending, subtotal=subtotal, shipping_cost=shipping, tax=0, total=result["total"], notes=body.notes)
             db.add(order)
             db.flush()
-            for cart_item in items:
+            for priced in result["items"]:
+                cart_item = priced["cart_item"]
                 reserve_variant(db, cart_item.variant_id, cart_item.quantity, order.id)
-                db.add(OrderItem(order_id=order.id, variant_id=cart_item.variant_id, product_name=cart_item.variant.product.name, sku=cart_item.variant.sku, quantity=cart_item.quantity, unit_price=cart_item.variant.price, unit_cost=cart_item.variant.cost))
+                db.add(OrderItem(order_id=order.id, variant_id=cart_item.variant_id, product_name=cart_item.variant.product.name, sku=cart_item.variant.sku, quantity=cart_item.quantity, unit_price=priced["unit_price"], unit_cost=cart_item.variant.cost))
+            for line in [*result["discounts"], *result["extra_charges"]]:
+                db.add(
+                    OrderAdjustment(
+                        order_id=order.id,
+                        kind=OrderAdjustmentKind(line["kind"]),
+                        source_type=line.get("source_type"),
+                        source_id=line.get("source_id"),
+                        name=line["name"],
+                        amount=line["amount"],
+                        metadata_json={"code": line.get("code")} if line.get("code") else {},
+                    )
+                )
+            if result["coupon"] is not None:
+                result["coupon"].used_count += 1
             is_manual = body.payment_method in MANUAL_METHODS
             # La cuenta elegida solo aplica si pertenece a esta tienda y está activa.
             payout_account_id = None
@@ -338,6 +464,12 @@ def checkout(body: CheckoutIn, user: User = Depends(require_buyer), db: Session 
                 account = db.get(PayoutAccount, body.payout_account_id)
                 if account is not None and account.store_id == store_id and account.active:
                     payout_account_id = account.id
+            if is_manual:
+                expected_type = PayoutAccountType.bank if body.payment_method == "transfer" else PayoutAccountType.bre_b
+                account = db.get(PayoutAccount, body.payout_account_id) if body.payout_account_id else None
+                if account is None or account.store_id != store_id or not account.active or account.type != expected_type:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cuenta de cobro no valida para esta tienda")
+                payout_account_id = account.id
             db.add(Payment(order_id=order.id, provider="manual" if is_manual else "pending", method=body.payment_method, status=PaymentStatus.pending, amount=order.total, platform_fee=order.total * commission_pct // 100, seller_amount=order.total - (order.total * commission_pct // 100), currency="COP", payout_account_id=payout_account_id))
             created.append(order)
         db.query(CartItem).filter(CartItem.cart_id == cart.id).delete(synchronize_session=False)

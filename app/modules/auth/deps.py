@@ -43,6 +43,15 @@ def get_current_user(
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
+    ensure_password_change_completed(user)
     if user.role != UserRole.admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Requiere rol admin")
     return user
+
+
+def ensure_password_change_completed(user: User) -> None:
+    if user.must_change_password:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {"code": "password_change_required", "message": "Debes cambiar tu contrasena antes de continuar"},
+        )

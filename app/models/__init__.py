@@ -4,11 +4,11 @@ from app.models.user import User
 from app.models.store import Store, StoreMember, Warehouse
 from app.models.catalog import Category, Product, ProductCategory, ProductImage, ProductVariant
 from app.models.inventory import InventoryMovement, StockLevel
-from app.models.order import Address, Order, OrderItem
+from app.models.order import Address, Order, OrderAdjustment, OrderItem
 from app.models.payment import Payment
 from app.models.shipping import Shipment
 from app.models.cart import Cart, CartItem
-from app.models.promotion import Coupon, Promotion
+from app.models.promotion import Coupon, ExtraCharge, Promotion
 from app.models.review import Dispute, Review, ReviewReport
 from app.models.platform import PlatformSetting
 from app.models.favorite import Favorite
@@ -28,6 +28,7 @@ __all__ = [
     "InventoryMovement",
     "Address",
     "Order",
+    "OrderAdjustment",
     "OrderItem",
     "Payment",
     "Shipment",
@@ -35,6 +36,7 @@ __all__ = [
     "CartItem",
     "Promotion",
     "Coupon",
+    "ExtraCharge",
     "Review",
     "ReviewReport",
     "Dispute",
