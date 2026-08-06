@@ -1,5 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -8,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Coupon, ExtraCharge, Order, OrderItem, Payment, PayoutAccount, PlatformSetting, Product, ProductVariant, Promotion, Store, StoreMember, User, Warehouse
+from app.models import Coupon, ExtraCharge, Order, OrderItem, Payment, PayoutAccount, PlatformSetting, Product, ProductVariant, Promotion, StockLevel, Store, StoreMember, User, Warehouse
 from app.models.order import OrderStatus, SaleChannel
 from app.models.payment import PaymentStatus
 from app.models.payout import PayoutAccountType
@@ -16,7 +17,7 @@ from app.models.promotion import ChargeType, DiscountType, PromotionScope
 from app.modules.common import mailer
 from app.modules.common.permissions import get_seller_store, require_seller
 from app.modules.common.storage import signed_url
-from app.modules.inventory.service import consume_variant, fulfill_reserved_order, release_order
+from app.modules.inventory.service import consume_reserved_order_from_warehouse, consume_variant, fulfill_reserved_order, restock_order
 from app.modules.orders.router import _order_out, _payout_account_out
 from app.modules.orders.schemas import OrderOut, OrderStatusPatch, PosOrderIn, WarehouseAssign
 from app.modules.seller.schemas import (
@@ -32,6 +33,7 @@ from app.modules.seller.schemas import (
     PromotionIn,
     PromotionOut,
     PromotionPatch,
+    SalesChannelReportOut,
     SellerStoreMemberOut,
 )
 
@@ -59,6 +61,40 @@ def _assert_transition(current: OrderStatus, target: OrderStatus) -> None:
         raise HTTPException(status.HTTP_409_CONFLICT, f"No se puede pasar de {current.value} a {target.value}")
 
 
+def _sales_channel_report(store: Store, db: Session, date_from: date | None = None, date_to: date | None = None) -> dict:
+    stmt = select(Order).where(Order.store_id == store.id, Order.status != OrderStatus.cancelled)
+    if date_from:
+        stmt = stmt.where(Order.created_at >= datetime.combine(date_from, datetime.min.time(), timezone.utc))
+    if date_to:
+        stmt = stmt.where(Order.created_at <= datetime.combine(date_to, datetime.max.time(), timezone.utc))
+
+    orders = db.scalars(stmt).all()
+    by_channel = []
+    for channel in SaleChannel:
+        channel_orders = [order for order in orders if order.channel == channel]
+        by_channel.append(
+            {
+                "channel": channel.value,
+                "orders": len(channel_orders),
+                "gross": sum(order.total for order in channel_orders),
+            }
+        )
+
+    gross = sum(row["gross"] for row in by_channel)
+    costs = sum(item.quantity * (item.unit_cost or 0) for order in orders for item in order.items)
+    fees = sum(payment.platform_fee for order in orders for payment in order.payments if payment.status == PaymentStatus.paid)
+    return {
+        "totals": {
+            "orders": sum(row["orders"] for row in by_channel),
+            "gross": gross,
+            "costs": costs,
+            "platform_fees": fees,
+            "profit": gross - costs - fees,
+        },
+        "by_channel": by_channel,
+    }
+
+
 @router.get("/dashboard")
 def seller_dashboard(
     date_from: date | None = None,
@@ -66,30 +102,29 @@ def seller_dashboard(
     store: Store = Depends(get_seller_store),
     db: Session = Depends(get_db),
 ):
-    stmt = select(Order).where(Order.store_id == store.id, Order.status != OrderStatus.cancelled)
-    if date_from:
-        stmt = stmt.where(Order.created_at >= datetime.combine(date_from, datetime.min.time(), timezone.utc))
-    if date_to:
-        stmt = stmt.where(Order.created_at < datetime.combine(date_to, datetime.max.time(), timezone.utc))
-    orders = db.scalars(stmt).all()
-    gross = sum(order.total for order in orders)
-    costs = sum(item.quantity * (item.unit_cost or 0) for order in orders for item in order.items)
-    fees = sum(payment.platform_fee for order in orders for payment in order.payments if payment.status == PaymentStatus.paid)
-    by_channel = []
-    for channel in SaleChannel:
-        channel_orders = [order for order in orders if order.channel == channel]
-        by_channel.append({"channel": channel.value, "orders": len(channel_orders), "gross": sum(order.total for order in channel_orders)})
-    return {"totals": {"orders": len(orders), "gross": gross, "costs": costs, "platform_fees": fees, "profit": gross - costs - fees}, "by_channel": by_channel}
+    return _sales_channel_report(store, db, date_from, date_to)
 
 
-@router.get("/reports/sales")
+@router.get(
+    "/reports/sales",
+    response_model=SalesChannelReportOut,
+    status_code=status.HTTP_200_OK,
+    summary="Comparar ventas por canal",
+    description=(
+        "Rol permitido: seller. HU-CANAL-03. Retorna ventas online y presenciales "
+        "de la tienda autenticada en un rango de fechas inclusivo, excluyendo pedidos cancelados "
+        "y mostrando cero cuando un canal no tuvo ventas."
+    ),
+    response_description="Reporte comparativo con totales generales y desglose por canal.",
+    responses=COMMON_RESPONSES,
+)
 def seller_sales_report(
-    date_from: date | None = None,
-    date_to: date | None = None,
+    date_from: date | None = Query(default=None, description="Fecha inicial inclusiva del reporte.", example="2026-08-01"),
+    date_to: date | None = Query(default=None, description="Fecha final inclusiva del reporte.", example="2026-08-31"),
     store: Store = Depends(get_seller_store),
     db: Session = Depends(get_db),
 ):
-    return seller_dashboard(date_from, date_to, store, db)
+    return _sales_channel_report(store, db, date_from, date_to)
 
 
 @router.get(
@@ -123,7 +158,15 @@ def seller_store_members(store: Store = Depends(get_seller_store), db: Session =
     ]
 
 
-@router.get("/orders", response_model=list[OrderOut])
+@router.get(
+    "/orders",
+    response_model=list[OrderOut],
+    status_code=status.HTTP_200_OK,
+    summary="Listar pedidos de mi tienda",
+    description="Rol permitido: seller. HU-CHK-05. Lista solo pedidos asignados a la tienda del seller o su equipo, aunque la compra del comprador tenga varias tiendas.",
+    response_description="Pedidos de la tienda autenticada.",
+    responses={401: {"description": "Token requerido o invalido."}, 403: {"description": "Requiere rol seller o tienda no permitida."}, 422: {"description": "Validacion Pydantic."}},
+)
 def seller_orders(
     status_filter: str | None = Query(None, alias="status"),
     channel: str | None = Query(None, pattern="^(online|presencial)$"),
@@ -145,54 +188,119 @@ def _seller_order(order_id: str, store: Store, db: Session) -> Order:
     return order
 
 
-@router.patch("/orders/{order_id}/status", response_model=OrderOut)
+ORDER_INVENTORY_RESPONSES = {
+    400: {"description": "Datos invalidos o almacen inactivo."},
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol seller o pedido fuera de la tienda."},
+    404: {"description": "Pedido o almacen no encontrado."},
+    409: {"description": "Transicion invalida, stock insuficiente o pedido ya descontado."},
+    422: {"description": "Validacion Pydantic."},
+}
+
+POS_ORDER_RESPONSES = {
+    400: {"description": "La tienda no tiene almacen activo para vender."},
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol seller o tienda no permitida."},
+    404: {"description": "Comprador inexistente o variante fuera de la tienda."},
+    409: {"description": "Stock insuficiente; informa la disponibilidad real."},
+    422: {"description": "Validacion Pydantic."},
+}
+
+
+@router.patch(
+    "/orders/{order_id}/status",
+    response_model=OrderOut,
+    status_code=status.HTTP_200_OK,
+    summary="Actualizar estado de pedido",
+    description="Rol permitido: seller. HU-INV-04. Actualiza el estado de un pedido propio y repone o libera inventario cuando se cancela o devuelve.",
+    response_description="Pedido actualizado con inventario conciliado segun el estado.",
+    responses=ORDER_INVENTORY_RESPONSES,
+)
 def patch_order_status(order_id: str, body: OrderStatusPatch, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     order = _seller_order(order_id, store, db)
     target = OrderStatus(body.status)
     _assert_transition(order.status, target)
     if target == OrderStatus.cancelled and order.status != OrderStatus.cancelled:
-        release_order(db, order)
+        restock_order(db, order, note="Reposicion por cancelacion seller")
     if target == OrderStatus.shipped and order.status != OrderStatus.shipped:
         fulfill_reserved_order(db, order)
+    if target == OrderStatus.returned and order.status != OrderStatus.returned:
+        restock_order(db, order, note="Reposicion por devolucion aprobada")
     order.status = target
     db.commit()
     db.refresh(order)
     return OrderOut.model_validate(_order_out(order))
 
 
-@router.patch("/orders/{order_id}/warehouse", response_model=OrderOut)
+@router.patch(
+    "/orders/{order_id}/warehouse",
+    response_model=OrderOut,
+    status_code=status.HTTP_200_OK,
+    summary="Asignar almacen de despacho",
+    description="Rol permitido: seller. HU-INV-03. Asigna el almacen de despacho de un pedido propio y descuenta firmemente el stock reservado desde ese almacen.",
+    response_description="Pedido con almacen asignado y movimientos de salida registrados.",
+    responses=ORDER_INVENTORY_RESPONSES,
+)
 def assign_order_warehouse(order_id: str, body: WarehouseAssign, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     order = _seller_order(order_id, store, db)
-    warehouse = db.get(Warehouse, body.warehouse_id)
-    if warehouse is None or warehouse.store_id != store.id or not warehouse.active:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El almacén no pertenece a tu tienda o está inactivo")
-    order.warehouse_id = warehouse.id
+    consume_reserved_order_from_warehouse(db, order, body.warehouse_id)
+    order.warehouse_id = body.warehouse_id
     db.commit()
     db.refresh(order)
     return OrderOut.model_validate(_order_out(order))
 
 
-@router.post("/pos/orders", response_model=OrderOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/pos/orders",
+    response_model=OrderOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear venta presencial",
+    description=(
+        "Rol permitido: seller. HU-CANAL-01 y HU-CANAL-02. Registra una venta mini-POS "
+        "en canal presencial, sin exigir comprador, validando pertenencia de variantes y "
+        "stock real antes de descontar inventario inmediatamente."
+    ),
+    response_description="Pedido presencial creado, entregado, con pago POS pagado e inventario descontado.",
+    responses=POS_ORDER_RESPONSES,
+)
 def create_pos_order(body: PosOrderIn, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     warehouse = db.scalar(select(Warehouse).where(Warehouse.store_id == store.id, Warehouse.active.is_(True), Warehouse.is_default.is_(True)))
     if warehouse is None:
         warehouse = db.scalar(select(Warehouse).where(Warehouse.store_id == store.id, Warehouse.active.is_(True)).order_by(Warehouse.name))
     if warehouse is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Debes registrar un almacén antes de vender")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Debes registrar un almacÃ©n antes de vender")
+    if body.buyer_id and db.get(User, body.buyer_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Comprador no encontrado")
+
+    requested: dict[str, int] = defaultdict(int)
+    for item in body.items:
+        requested[item.variant_id] += item.quantity
+
+    variants: dict[str, ProductVariant] = {}
+    for variant_id, quantity in requested.items():
+        variant = db.get(ProductVariant, variant_id)
+        if variant is None or not variant.active or variant.product.store_id != store.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Una variante no pertenece a tu tienda")
+        level = db.scalar(
+            select(StockLevel)
+            .where(StockLevel.variant_id == variant.id, StockLevel.warehouse_id == warehouse.id)
+            .with_for_update()
+        )
+        available = max(0, (level.quantity if level else 0) - (level.reserved if level else 0))
+        if available < quantity:
+            sku = variant.sku or variant.id
+            raise HTTPException(status.HTTP_409_CONFLICT, f"Stock insuficiente para {sku}. Disponible: {available}")
+        variants[variant_id] = variant
+
     try:
-        variants = []
-        for item in body.items:
-            variant = db.get(ProductVariant, item.variant_id)
-            if variant is None or not variant.active or variant.product.store_id != store.id:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Una variante no pertenece a tu tienda")
-            consume_variant(db, variant.id, item.quantity, warehouse_id=warehouse.id)
-            variants.append((item, variant))
-        subtotal = sum(item.quantity * variant.price for item, variant in variants)
+        subtotal = sum(quantity * variants[variant_id].price for variant_id, quantity in requested.items())
         order = Order(store_id=store.id, buyer_id=body.buyer_id, warehouse_id=warehouse.id, channel=SaleChannel.presencial, status=OrderStatus.delivered, subtotal=subtotal, total=subtotal, notes=body.notes)
         db.add(order)
         db.flush()
-        for item, variant in variants:
-            db.add(OrderItem(order_id=order.id, variant_id=variant.id, product_name=variant.product.name, sku=variant.sku, quantity=item.quantity, unit_price=variant.price, unit_cost=variant.cost))
+        for variant_id, quantity in requested.items():
+            variant = variants[variant_id]
+            consume_variant(db, variant.id, quantity, order_id=order.id, warehouse_id=warehouse.id)
+            db.add(OrderItem(order_id=order.id, variant_id=variant.id, product_name=variant.product.name, sku=variant.sku, quantity=quantity, unit_price=variant.price, unit_cost=variant.cost))
         setting = db.get(PlatformSetting, "commission")
         pct = int((setting.value if setting else {}).get("value", 0))
         fee = subtotal * pct // 100
@@ -343,7 +451,7 @@ def create_promotion(body: PromotionIn, store: Store = Depends(get_seller_store)
 def patch_promotion(promotion_id: str, body: PromotionPatch, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     item = db.get(Promotion, promotion_id)
     if item is None or item.store_id != store.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Promoción no encontrada")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "PromociÃ³n no encontrada")
     values = body.model_dump(exclude_unset=True)
     _validate_window(values.get("starts_at", item.starts_at), values.get("ends_at", item.ends_at))
     discount_type = values.get("discount_type", item.discount_type.value)
@@ -440,7 +548,7 @@ def create_coupon(body: CouponIn, store: Store = Depends(get_seller_store), db: 
 def patch_coupon(coupon_id: str, body: CouponPatch, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     item = db.get(Coupon, coupon_id)
     if item is None or item.store_id != store.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cupón no encontrado")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "CupÃ³n no encontrado")
     values = body.model_dump(exclude_unset=True)
     _validate_window(values.get("starts_at", item.starts_at), values.get("ends_at", item.ends_at))
     discount_type = values.get("discount_type", item.discount_type.value)
@@ -620,7 +728,7 @@ def patch_payout_account(account_id: str, body: PayoutAccountPatch, store: Store
 
 @router.delete("/payout-accounts/{account_id}")
 def deactivate_payout_account(account_id: str, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
-    """Baja lógica: conserva la referencia en pedidos ya pagados con esa cuenta."""
+    """Baja lÃ³gica: conserva la referencia en pedidos ya pagados con esa cuenta."""
     account = _seller_payout_account(account_id, store, db)
     account.active = False
     db.commit()
@@ -628,7 +736,7 @@ def deactivate_payout_account(account_id: str, store: Store = Depends(get_seller
     return _payout_account_out(account)
 
 
-# --- Revisión de comprobantes (RF-PAGO-03) ----------------------------------
+# --- RevisiÃ³n de comprobantes (RF-PAGO-03) ----------------------------------
 
 
 def _seller_payment_out(payment: Payment) -> dict:
@@ -659,7 +767,7 @@ def seller_payments(
     store: Store = Depends(get_seller_store),
     db: Session = Depends(get_db),
 ):
-    """Bandeja de pagos manuales de la tienda (por defecto, los que esperan revisión)."""
+    """Bandeja de pagos manuales de la tienda (por defecto, los que esperan revisiÃ³n)."""
     stmt = select(Payment).join(Order, Payment.order_id == Order.id).where(Order.store_id == store.id)
     if payment_status:
         stmt = stmt.where(Payment.status == PaymentStatus(payment_status))
@@ -685,7 +793,7 @@ def confirm_manual_payment(
     user: User = Depends(require_seller),
     db: Session = Depends(get_db),
 ):
-    """El vendedor confirma que el dinero llegó, registrando el monto recibido."""
+    """El vendedor confirma que el dinero llegÃ³, registrando el monto recibido."""
     payment = _seller_payment(payment_id, store, db)
     if payment.status not in (PaymentStatus.in_review, PaymentStatus.pending):
         raise HTTPException(status.HTTP_409_CONFLICT, "Este pago ya fue revisado")
@@ -729,7 +837,7 @@ def reject_manual_payment(
     payment.reviewed_at = datetime.now(timezone.utc)
     payment.reviewed_by = user.id
     if order.status not in (OrderStatus.cancelled, OrderStatus.delivered, OrderStatus.returned):
-        release_order(db, order)
+        restock_order(db, order, note="Reposicion por rechazo de pago")
         order.status = OrderStatus.cancelled
     db.commit()
     db.refresh(payment)

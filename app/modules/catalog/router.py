@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session
 from pydantic import ValidationError
 
 from app.db.session import get_db
-from app.models import Category, InventoryMovement, PayoutAccount, PlatformSetting, Product, ProductCategory, ProductImage, ProductVariant, StockLevel, Store, Warehouse
+from app.models import Category, InventoryMovement, Order, OrderItem, PayoutAccount, PlatformSetting, Product, ProductCategory, ProductImage, ProductVariant, StockLevel, Store, Warehouse
 from app.models.catalog import ProductStatus
 from app.models.inventory import InventoryReason
+from app.models.order import OrderStatus
 from app.models.payout import PayoutAccountType
 from app.models.user import User
 from app.modules.catalog.schemas import (
@@ -48,6 +49,7 @@ from app.modules.catalog.schemas import (
 )
 from app.modules.common.permissions import ensure_store_member, get_seller_store, require_seller
 from app.modules.auth.deps import get_current_user
+from app.modules.inventory.service import available_for_variant
 from app.modules.pricing.service import effective_unit_price, validate_special_price
 
 public_router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -182,7 +184,7 @@ def _slug(value: str) -> str:
 
 
 def _stock(variant: ProductVariant) -> int:
-    return sum(max(0, level.quantity - level.reserved) for level in variant.stock_levels)
+    return available_for_variant(variant)
 
 
 def _image_out(image: ProductImage) -> dict:
@@ -231,15 +233,15 @@ def _variant_out(variant: ProductVariant, *, include_internal: bool = False, pro
     return data
 
 
-def _product_out(product: Product, *, include_internal: bool = False) -> dict:
+def _product_out(product: Product, *, include_internal: bool = False, include_store_context: bool = False, db: Session | None = None) -> dict:
     variants = [
         _variant_out(variant, include_internal=include_internal, product_status=product.status)
         for variant in sorted(product.variants, key=lambda item: item.sku)
         if variant.active
     ]
     total_stock = sum(item["stock"] for item in variants)
-    first = variants[0] if variants else {"price": 0, "compare_at": None}
-    return {
+    first = min(variants, key=lambda item: item["price"]) if variants else {"price": 0, "compare_at": None}
+    data = {
         "id": product.id,
         "store_id": product.store_id,
         "store_name": product.store.name,
@@ -268,10 +270,33 @@ def _product_out(product: Product, *, include_internal: bool = False) -> dict:
         "created_at": product.created_at,
         "updated_at": product.updated_at,
     }
+    if include_store_context and db is not None:
+        data["store_contact"] = _product_store_contact_out(product.store)
+        data["shipping"] = _product_shipping_out(product.store_id, db)
+    return data
 
 
 def _seller_product_out(product: Product) -> dict:
     return _product_out(product, include_internal=True)
+
+
+def _product_store_contact_out(store: Store) -> dict:
+    return {
+        "email": store.contact_email,
+        "phone": store.contact_phone,
+        "whatsapp_phone": store.whatsapp_phone,
+    }
+
+
+def _product_shipping_out(store_id: str, db: Session) -> dict:
+    settings = get_store_settings_value(store_id, db)
+    zones = settings.shipping_zones or []
+    return {
+        "flat_cost": settings.shipping_flat_cost,
+        "free_threshold": settings.shipping_free_threshold,
+        "zones": zones,
+        "to_agree": settings.shipping_flat_cost == 0 and not zones,
+    }
 
 
 def _category_out(category: Category) -> CategoryOut:
@@ -377,6 +402,17 @@ def _product_query(store_id: str | None = None):
     return stmt
 
 
+def _sold_units_by_product(db: Session) -> dict[str, int]:
+    rows = db.execute(
+        select(ProductVariant.product_id, func.coalesce(func.sum(OrderItem.quantity), 0))
+        .join(OrderItem, OrderItem.variant_id == ProductVariant.id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(Order.status != OrderStatus.cancelled)
+        .group_by(ProductVariant.product_id)
+    ).all()
+    return {product_id: int(quantity or 0) for product_id, quantity in rows}
+
+
 @public_router.get(
     "/stores",
     response_model=StoreListPublicOut,
@@ -431,62 +467,83 @@ def public_categories(store_id: str | None = None, db: Session = Depends(get_db)
     "/products",
     response_model=ProductListOut,
     status_code=status.HTTP_200_OK,
-    summary="Listar productos publicos",
+    summary="Buscar productos",
     description=(
-        "Endpoint publico. HU-CAT-02, HU-PROD-01, HU-PROD-06 y HU-PROM-01. Lista productos visibles para compradores: "
-        "`active` y `out_of_stock`; oculta `draft` y `discontinued`. Permite filtrar por `store_id` y "
-        "`category` para navegar productos asignados a multiples categorias."
+        "Endpoint publico. HU-BUS-01, HU-BUS-02, HU-CAT-02, HU-PROD-01, HU-PROD-06 y HU-PROM-01. "
+        "Busca productos visibles para compradores por nombre o descripcion, permite combinar filtros "
+        "de tienda, categoria, precio efectivo y disponibilidad, y ordena por destacados, precio, nuevos "
+        "o volumen real de ventas."
     ),
-    response_description="Pagina de productos visibles filtrados por busqueda, tienda, categoria y precio.",
-    responses=PRODUCT_PUBLIC_RESPONSES,
+    response_description="Pagina de productos visibles filtrados y ordenados; puede retornar total cero sin error.",
+    responses={400: {"description": "Rango de precio invalido."}, **PRODUCT_PUBLIC_RESPONSES},
 )
 def public_products(
-    q: str | None = None,
-    category: str | None = None,
-    store_id: str | None = None,
-    min_price: int | None = Query(None, ge=0),
-    max_price: int | None = Query(None, ge=0),
-    in_stock: bool = False,
-    sort: str = Query("destacados", pattern="^(destacados|nuevos|precio-asc|precio-desc|vendidos)$"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(24, ge=1, le=100),
+    q: str | None = Query(default=None, description="Termino de busqueda sobre nombre, resumen o descripcion.", example="camisa"),
+    category: str | None = Query(default=None, description="Slug de categoria activa por la que se filtra.", example="camisas"),
+    store_id: str | None = Query(default=None, description="Identificador de tienda activa para acotar el catalogo.", example="store-nova"),
+    min_price: int | None = Query(default=None, ge=0, description="Precio efectivo minimo en COP.", example=30000),
+    max_price: int | None = Query(default=None, ge=0, description="Precio efectivo maximo en COP.", example=80000),
+    in_stock: bool = Query(default=False, description="Cuando es true, retorna solo productos con disponibilidad real.", example=True),
+    sort: str = Query("destacados", description="Orden: relevancia, destacados, nuevos, precio-asc, precio-desc o vendidos.", pattern="^(relevancia|destacados|nuevos|precio-asc|precio-desc|vendidos)$", example="precio-asc"),
+    page: int = Query(1, ge=1, description="Pagina solicitada.", example=1),
+    page_size: int = Query(24, ge=1, le=100, description="Cantidad de productos por pagina.", example=24),
     db: Session = Depends(get_db),
 ):
+    if min_price is not None and max_price is not None and min_price > max_price:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "min_price no puede ser mayor que max_price")
+
     stmt = _product_query(store_id).where(Product.status.in_([ProductStatus.active, ProductStatus.out_of_stock]))
     if q:
         pattern = f"%{q.lower()}%"
         stmt = stmt.where(
-            or_(func.lower(Product.name).like(pattern), func.lower(Product.short_desc).like(pattern))
+            or_(
+                func.lower(Product.name).like(pattern),
+                func.lower(Product.short_desc).like(pattern),
+                func.lower(Product.description).like(pattern),
+            )
         )
     if category:
         stmt = stmt.join(ProductCategory).join(Category).where(
             Category.slug == category, Category.active.is_(True)
         )
-    price = select(func.min(ProductVariant.price)).where(ProductVariant.product_id == Product.id).scalar_subquery()
+    rows = db.scalars(stmt).unique().all()
+    items = [ProductOut.model_validate(_product_out(row)) for row in rows]
+
     if min_price is not None:
-        stmt = stmt.where(price >= min_price)
+        items = [item for item in items if item.price >= min_price]
     if max_price is not None:
-        stmt = stmt.where(price <= max_price)
+        items = [item for item in items if item.price <= max_price]
     if in_stock:
-        stmt = stmt.where(Product.variants.any(ProductVariant.stock_levels.any(StockLevel.quantity > StockLevel.reserved)))
+        items = [item for item in items if item.stock > 0]
+
     if sort == "nuevos":
-        stmt = stmt.order_by(Product.created_at.desc())
+        items.sort(key=lambda item: (item.created_at, item.name), reverse=True)
     elif sort == "precio-asc":
-        stmt = stmt.order_by(price.asc())
+        items.sort(key=lambda item: (item.price, item.name, item.id))
     elif sort == "precio-desc":
-        stmt = stmt.order_by(price.desc())
+        items.sort(key=lambda item: (-item.price, item.name, item.id))
     elif sort == "vendidos":
-        stmt = stmt.order_by(Product.bestseller.desc(), Product.created_at.desc())
-    else:  # destacados
-        stmt = stmt.order_by(Product.bestseller.desc(), Product.created_at.desc())
-    count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
-    total = db.scalar(count_stmt) or 0
-    rows = db.scalars(stmt.offset((page - 1) * page_size).limit(page_size)).unique().all()
+        sold_units = _sold_units_by_product(db)
+        items.sort(key=lambda item: (-sold_units.get(item.id, 0), not item.bestseller, item.name, item.id))
+    else:
+        term = (q or "").lower()
+        items.sort(
+            key=lambda item: (
+                0 if term and term in item.name.lower() else 1,
+                not item.bestseller,
+                -item.created_at.timestamp(),
+                item.name,
+                item.id,
+            )
+        )
+
+    total = len(items)
+    page_items = items[(page - 1) * page_size : page * page_size]
     return ProductListOut(
         total=total,
         page=page,
         page_size=page_size,
-        items=[ProductOut.model_validate(_product_out(row)) for row in rows],
+        items=page_items,
     )
 
 
@@ -505,16 +562,21 @@ def _find_public_product(slug: str, store_id: str | None, db: Session) -> Produc
     "/products/{slug}",
     response_model=ProductOut,
     status_code=status.HTTP_200_OK,
-    summary="Consultar producto publico",
+    summary="Consultar detalle de producto",
     description=(
-        "Endpoint publico. HU-PROD-02, HU-PROD-04, HU-PROD-05, HU-PROD-06, HU-PROM-01 y HU-PROM-03. Retorna detalle publico "
-        "del producto visible, variantes con precio efectivo/stock/disponibilidad e imagenes, sin exponer costos internos."
+        "Endpoint publico. HU-BUS-03, HU-PROD-02, HU-PROD-04, HU-PROD-05, HU-PROD-06, HU-PROM-01 y HU-PROM-03. "
+        "Retorna detalle publico del producto visible, variantes con precio efectivo, stock, disponibilidad, imagenes "
+        "y datos de envio/contacto de la tienda, sin exponer costos internos."
     ),
-    response_description="Detalle publico del producto sin costo interno.",
+    response_description="Detalle publico del producto con variantes, imagenes, disponibilidad y datos de envio/contacto.",
     responses=PRODUCT_PUBLIC_RESPONSES,
 )
-def public_product(slug: str, store_id: str | None = None, db: Session = Depends(get_db)):
-    return ProductOut.model_validate(_product_out(_find_public_product(slug, store_id, db)))
+def public_product(
+    slug: str,
+    store_id: str | None = Query(default=None, description="Identificador de tienda activa para resolver slugs repetidos.", example="store-nova"),
+    db: Session = Depends(get_db),
+):
+    return ProductOut.model_validate(_product_out(_find_public_product(slug, store_id, db), include_store_context=True, db=db))
 
 
 @seller_router.get(

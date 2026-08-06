@@ -42,8 +42,8 @@ Marketplace Singular — API Python
 - [GET `/api/v1/catalog/stores`](#get-apiv1catalogstores) — Listar tiendas
 - [GET `/api/v1/catalog/stores/{store_id}/payment-options`](#get-apiv1catalogstoresstore-idpayment-options) — Consultar opciones de pago
 - [GET `/api/v1/catalog/categories`](#get-apiv1catalogcategories) — Listar categorias publicas
-- [GET `/api/v1/catalog/products`](#get-apiv1catalogproducts) — Listar productos publicos
-- [GET `/api/v1/catalog/products/{slug}`](#get-apiv1catalogproductsslug) — Consultar producto publico
+- [GET `/api/v1/catalog/products`](#get-apiv1catalogproducts) — Buscar productos
+- [GET `/api/v1/catalog/products/{slug}`](#get-apiv1catalogproductsslug) — Consultar detalle de producto
 - [GET `/api/v1/seller/store`](#get-apiv1sellerstore) — Consultar mi tienda
 - [PATCH `/api/v1/seller/store`](#patch-apiv1sellerstore) — Actualizar mi tienda
 - [GET `/api/v1/seller/store/settings`](#get-apiv1sellerstoresettings) — Consultar configuracion de tienda
@@ -64,13 +64,14 @@ Marketplace Singular — API Python
 - [DELETE `/api/v1/seller/products/{product_id}/images/{image_id}`](#delete-apiv1sellerproductsproduct-idimagesimage-id) — Eliminar imagen de producto
 - [GET `/api/v1/seller/products/import/template`](#get-apiv1sellerproductsimporttemplate) — Descargar plantilla de productos
 - [POST `/api/v1/seller/products/import`](#post-apiv1sellerproductsimport) — Importar productos
-- [GET `/api/v1/catalog/variants/{variant_id}/stock`](#get-apiv1catalogvariantsvariant-idstock) — Public Variant Stock
+- [GET `/api/v1/catalog/variants/{variant_id}/stock`](#get-apiv1catalogvariantsvariant-idstock) — Consultar stock publico de variante
 - [GET `/api/v1/seller/warehouses`](#get-apiv1sellerwarehouses) — Listar almacenes
 - [POST `/api/v1/seller/warehouses`](#post-apiv1sellerwarehouses) — Crear almacen
 - [PATCH `/api/v1/seller/warehouses/{warehouse_id}`](#patch-apiv1sellerwarehouseswarehouse-id) — Actualizar almacen
-- [GET `/api/v1/seller/inventory`](#get-apiv1sellerinventory) — List Inventory
-- [PATCH `/api/v1/seller/inventory/{variant_id}`](#patch-apiv1sellerinventoryvariant-id) — Adjust Inventory
-- [GET `/api/v1/seller/inventory/movements`](#get-apiv1sellerinventorymovements) — Inventory Movements
+- [GET `/api/v1/seller/inventory`](#get-apiv1sellerinventory) — Listar inventario
+- [PATCH `/api/v1/seller/inventory/{variant_id}`](#patch-apiv1sellerinventoryvariant-id) — Ajustar stock de variante
+- [GET `/api/v1/seller/inventory/alerts`](#get-apiv1sellerinventoryalerts) — Listar alertas de inventario
+- [GET `/api/v1/seller/inventory/movements`](#get-apiv1sellerinventorymovements) — Listar movimientos de inventario
 - [GET `/api/v1/addresses`](#get-apiv1addresses) — Listar direcciones
 - [POST `/api/v1/addresses`](#post-apiv1addresses) — Crear direccion
 - [PATCH `/api/v1/addresses/{address_id}`](#patch-apiv1addressesaddress-id) — Actualizar direccion
@@ -78,25 +79,27 @@ Marketplace Singular — API Python
 - [GET `/api/v1/favorites`](#get-apiv1favorites) — List Favorites
 - [POST `/api/v1/favorites/{product_id}`](#post-apiv1favoritesproduct-id) — Add Favorite
 - [DELETE `/api/v1/favorites/{product_id}`](#delete-apiv1favoritesproduct-id) — Remove Favorite
-- [GET `/api/v1/cart`](#get-apiv1cart) — Get Cart
-- [DELETE `/api/v1/cart`](#delete-apiv1cart) — Clear Cart
-- [POST `/api/v1/cart/items`](#post-apiv1cartitems) — Add Cart Item
-- [PATCH `/api/v1/cart/items/{item_id}`](#patch-apiv1cartitemsitem-id) — Patch Cart Item
-- [DELETE `/api/v1/cart/items/{item_id}`](#delete-apiv1cartitemsitem-id) — Delete Cart Item
+- [GET `/api/v1/cart`](#get-apiv1cart) — Consultar carrito
+- [DELETE `/api/v1/cart`](#delete-apiv1cart) — Vaciar carrito
+- [POST `/api/v1/cart/items`](#post-apiv1cartitems) — Agregar item al carrito
+- [PATCH `/api/v1/cart/items/{item_id}`](#patch-apiv1cartitemsitem-id) — Actualizar item del carrito
+- [DELETE `/api/v1/cart/items/{item_id}`](#delete-apiv1cartitemsitem-id) — Eliminar item del carrito
 - [POST `/api/v1/checkout/quote`](#post-apiv1checkoutquote) — Cotizar checkout
 - [POST `/api/v1/checkout`](#post-apiv1checkout) — Crear checkout
-- [GET `/api/v1/orders`](#get-apiv1orders) — Buyer Orders
-- [GET `/api/v1/orders/{order_id}`](#get-apiv1ordersorder-id) — Buyer Order
-- [POST `/api/v1/orders/{order_id}/cancel`](#post-apiv1ordersorder-idcancel) — Cancel Order
+- [GET `/api/v1/purchases`](#get-apiv1purchases) — Listar compras agrupadas
+- [GET `/api/v1/purchases/{purchase_id}`](#get-apiv1purchasespurchase-id) — Consultar compra agrupada
+- [GET `/api/v1/orders`](#get-apiv1orders) — Listar pedidos del comprador
+- [GET `/api/v1/orders/{order_id}`](#get-apiv1ordersorder-id) — Consultar pedido del comprador
+- [POST `/api/v1/orders/{order_id}/cancel`](#post-apiv1ordersorder-idcancel) — Cancelar pedido
 - [GET `/api/v1/orders/{order_id}/payment`](#get-apiv1ordersorder-idpayment) — Buyer Order Payment
 - [POST `/api/v1/orders/{order_id}/payment/receipt`](#post-apiv1ordersorder-idpaymentreceipt) — Upload Payment Receipt
 - [GET `/api/v1/seller/dashboard`](#get-apiv1sellerdashboard) — Seller Dashboard
-- [GET `/api/v1/seller/reports/sales`](#get-apiv1sellerreportssales) — Seller Sales Report
+- [GET `/api/v1/seller/reports/sales`](#get-apiv1sellerreportssales) — Comparar ventas por canal
 - [GET `/api/v1/seller/store/members`](#get-apiv1sellerstoremembers) — Listar usuarios de mi tienda
-- [GET `/api/v1/seller/orders`](#get-apiv1sellerorders) — Seller Orders
-- [PATCH `/api/v1/seller/orders/{order_id}/status`](#patch-apiv1sellerordersorder-idstatus) — Patch Order Status
-- [PATCH `/api/v1/seller/orders/{order_id}/warehouse`](#patch-apiv1sellerordersorder-idwarehouse) — Assign Order Warehouse
-- [POST `/api/v1/seller/pos/orders`](#post-apiv1sellerposorders) — Create Pos Order
+- [GET `/api/v1/seller/orders`](#get-apiv1sellerorders) — Listar pedidos de mi tienda
+- [PATCH `/api/v1/seller/orders/{order_id}/status`](#patch-apiv1sellerordersorder-idstatus) — Actualizar estado de pedido
+- [PATCH `/api/v1/seller/orders/{order_id}/warehouse`](#patch-apiv1sellerordersorder-idwarehouse) — Asignar almacen de despacho
+- [POST `/api/v1/seller/pos/orders`](#post-apiv1sellerposorders) — Crear venta presencial
 - [GET `/api/v1/seller/promotions`](#get-apiv1sellerpromotions) — Listar promociones
 - [POST `/api/v1/seller/promotions`](#post-apiv1sellerpromotions) — Crear promocion
 - [PATCH `/api/v1/seller/promotions/{promotion_id}`](#patch-apiv1sellerpromotionspromotion-id) — Actualizar promocion
@@ -1030,34 +1033,35 @@ Categorias activas con parent_id para reconstruir la jerarquia.
 
 ## `GET` `/api/v1/catalog/products`
 
-**Listar productos publicos**
+**Buscar productos**
 
-Endpoint publico. HU-CAT-02, HU-PROD-01, HU-PROD-06 y HU-PROM-01. Lista productos visibles para compradores: `active` y `out_of_stock`; oculta `draft` y `discontinued`. Permite filtrar por `store_id` y `category` para navegar productos asignados a multiples categorias.
+Endpoint publico. HU-BUS-01, HU-BUS-02, HU-CAT-02, HU-PROD-01, HU-PROD-06 y HU-PROM-01. Busca productos visibles para compradores por nombre o descripcion, permite combinar filtros de tienda, categoria, precio efectivo y disponibilidad, y ordena por destacados, precio, nuevos o volumen real de ventas.
 
 **Tags:** catalog
 
 ### Parámetros de query
 
-| Nombre    | Tipo    | Requerido | Descripción |
-| --------- | ------- | --------- | ----------- |
-| q         | string  |           |             |
-| category  | string  |           |             |
-| store_id  | string  |           |             |
-| min_price | string  |           |             |
-| max_price | string  |           |             |
-| in_stock  | boolean |           |             |
-| sort      | string  |           |             |
-| page      | integer |           |             |
-| page_size | integer |           |             |
+| Nombre    | Tipo    | Requerido | Descripción                                                                |
+| --------- | ------- | --------- | -------------------------------------------------------------------------- |
+| q         | string  |           | Termino de busqueda sobre nombre, resumen o descripcion.                   |
+| category  | string  |           | Slug de categoria activa por la que se filtra.                             |
+| store_id  | string  |           | Identificador de tienda activa para acotar el catalogo.                    |
+| min_price | string  |           | Precio efectivo minimo en COP.                                             |
+| max_price | string  |           | Precio efectivo maximo en COP.                                             |
+| in_stock  | boolean |           | Cuando es true, retorna solo productos con disponibilidad real.            |
+| sort      | string  |           | Orden: relevancia, destacados, nuevos, precio-asc, precio-desc o vendidos. |
+| page      | integer |           | Pagina solicitada.                                                         |
+| page_size | integer |           | Cantidad de productos por pagina.                                          |
 
 ### Respuesta `200`
 
-Pagina de productos visibles filtrados por busqueda, tienda, categoria y precio.
+Pagina de productos visibles filtrados y ordenados; puede retornar total cero sin error.
 
 ### Errores posibles
 
 | Código | Situación                                         | Mensaje típico |
 | ------ | ------------------------------------------------- | -------------- |
+| 400    | Rango de precio invalido.                         |                |
 | 404    | Producto no encontrado o no visible publicamente. |                |
 | 422    | Validacion Pydantic.                              |                |
 
@@ -1065,9 +1069,9 @@ Pagina de productos visibles filtrados por busqueda, tienda, categoria y precio.
 
 ## `GET` `/api/v1/catalog/products/{slug}`
 
-**Consultar producto publico**
+**Consultar detalle de producto**
 
-Endpoint publico. HU-PROD-02, HU-PROD-04, HU-PROD-05, HU-PROD-06, HU-PROM-01 y HU-PROM-03. Retorna detalle publico del producto visible, variantes con precio efectivo/stock/disponibilidad e imagenes, sin exponer costos internos.
+Endpoint publico. HU-BUS-03, HU-PROD-02, HU-PROD-04, HU-PROD-05, HU-PROD-06, HU-PROM-01 y HU-PROM-03. Retorna detalle publico del producto visible, variantes con precio efectivo, stock, disponibilidad, imagenes y datos de envio/contacto de la tienda, sin exponer costos internos.
 
 **Tags:** catalog
 
@@ -1079,13 +1083,13 @@ Endpoint publico. HU-PROD-02, HU-PROD-04, HU-PROD-05, HU-PROD-06, HU-PROM-01 y H
 
 ### Parámetros de query
 
-| Nombre   | Tipo   | Requerido | Descripción |
-| -------- | ------ | --------- | ----------- |
-| store_id | string |           |             |
+| Nombre   | Tipo   | Requerido | Descripción                                                   |
+| -------- | ------ | --------- | ------------------------------------------------------------- |
+| store_id | string |           | Identificador de tienda activa para resolver slugs repetidos. |
 
 ### Respuesta `200`
 
-Detalle publico del producto sin costo interno.
+Detalle publico del producto con variantes, imagenes, disponibilidad y datos de envio/contacto.
 
 ### Errores posibles
 
@@ -1691,7 +1695,9 @@ Resumen de productos creados y errores por fila.
 
 ## `GET` `/api/v1/catalog/variants/{variant_id}/stock`
 
-**Public Variant Stock**
+**Consultar stock publico de variante**
+
+Endpoint publico. HU-INV-07. Retorna disponibilidad real agregada de una variante descontando reservas vigentes.
 
 **Tags:** catalog-inventory
 
@@ -1703,13 +1709,14 @@ Resumen de productos creados y errores por fila.
 
 ### Respuesta `200`
 
-Successful Response
+Stock disponible y banderas de disponibilidad para comprador.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                          | Mensaje típico |
+| ------ | ---------------------------------- | -------------- |
+| 404    | Variante no encontrada o inactiva. |                |
+| 422    | Validacion Pydantic.               |                |
 
 ---
 
@@ -1717,7 +1724,7 @@ Successful Response
 
 **Listar almacenes**
 
-Rol permitido: seller. HU-TDA-02. Lista puntos o almacenes activos e inactivos de la tienda autenticada.
+Rol permitido: seller. HU-TDA-02 y HU-INV-03. Lista puntos o almacenes activos e inactivos de la tienda autenticada e indica si requiere asignacion manual de despacho.
 
 **Tags:** seller-inventory
 
@@ -1747,7 +1754,7 @@ Almacenes de la tienda con indicador de seleccion manual de despacho.
 
 **Crear almacen**
 
-Rol permitido: seller. HU-TDA-02. Registra un punto o almacen de la tienda para asociarle stock.
+Rol permitido: seller. HU-TDA-02 y HU-INV-01. Registra un punto o almacen de la tienda para asociarle stock por SKU.
 
 **Tags:** seller-inventory
 
@@ -1773,7 +1780,7 @@ Almacen creado y disponible segun su estado activo.
 
 **Actualizar almacen**
 
-Rol permitido: seller. HU-TDA-02. Actualiza o desactiva un almacen sin afectar pedidos ni movimientos historicos.
+Rol permitido: seller. HU-TDA-02 y HU-INV-03. Actualiza o desactiva un almacen sin afectar pedidos ni movimientos historicos.
 
 **Tags:** seller-inventory
 
@@ -1803,7 +1810,9 @@ Almacen actualizado.
 
 ## `GET` `/api/v1/seller/inventory`
 
-**List Inventory**
+**Listar inventario**
+
+Rol permitido: seller. HU-INV-01 y HU-INV-05. Lista inventario agregado por variante con desglose por almacen, disponible, reservado y alertas de bajo stock o agotado.
 
 **Tags:** seller-inventory
 
@@ -1812,11 +1821,13 @@ Almacen actualizado.
 | Nombre       | Tipo    | Requerido | Descripción |
 | ------------ | ------- | --------- | ----------- |
 | warehouse_id | string  |           |             |
+| product_id   | string  |           |             |
+| variant_id   | string  |           |             |
 | low_stock    | boolean |           |             |
 
 ### Respuesta `200`
 
-Successful Response
+Inventario agregado de la tienda autenticada.
 
 ```json
 [
@@ -1826,15 +1837,22 @@ Successful Response
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                         | Mensaje típico |
+| ------ | ------------------------------------------------- | -------------- |
+| 400    | Datos invalidos o almacen inactivo.               |                |
+| 401    | Token requerido o invalido.                       |                |
+| 403    | Requiere rol seller o recurso fuera de la tienda. |                |
+| 404    | Variante, producto o almacen no encontrado.       |                |
+| 409    | Stock insuficiente o estado incompatible.         |                |
+| 422    | Validacion Pydantic.                              |                |
 
 ---
 
 ## `PATCH` `/api/v1/seller/inventory/{variant_id}`
 
-**Adjust Inventory**
+**Ajustar stock de variante**
+
+Rol permitido: seller. HU-INV-01, HU-INV-05 y HU-INV-06. Registra o actualiza el stock de una variante en un almacen propio y deja movimiento de auditoria.
 
 **Tags:** seller-inventory
 
@@ -1848,7 +1866,7 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Desglose actualizado de stock por almacen para la variante.
 
 ```json
 [
@@ -1858,28 +1876,71 @@ Successful Response
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                         | Mensaje típico |
+| ------ | ------------------------------------------------- | -------------- |
+| 400    | Datos invalidos o almacen inactivo.               |                |
+| 401    | Token requerido o invalido.                       |                |
+| 403    | Requiere rol seller o recurso fuera de la tienda. |                |
+| 404    | Variante, producto o almacen no encontrado.       |                |
+| 409    | Stock insuficiente o estado incompatible.         |                |
+| 422    | Validacion Pydantic.                              |                |
+
+---
+
+## `GET` `/api/v1/seller/inventory/alerts`
+
+**Listar alertas de inventario**
+
+Rol permitido: seller. HU-INV-05. Lista alertas dinamicas de stock bajo o agotado calculadas desde el disponible agregado actual.
+
+**Tags:** seller-inventory
+
+### Respuesta `200`
+
+Alertas vigentes de bajo stock y agotado.
+
+```json
+[
+  {}
+]
+```
+
+### Errores posibles
+
+| Código | Situación                                         | Mensaje típico |
+| ------ | ------------------------------------------------- | -------------- |
+| 400    | Datos invalidos o almacen inactivo.               |                |
+| 401    | Token requerido o invalido.                       |                |
+| 403    | Requiere rol seller o recurso fuera de la tienda. |                |
+| 404    | Variante, producto o almacen no encontrado.       |                |
+| 409    | Stock insuficiente o estado incompatible.         |                |
+| 422    | Validacion Pydantic.                              |                |
 
 ---
 
 ## `GET` `/api/v1/seller/inventory/movements`
 
-**Inventory Movements**
+**Listar movimientos de inventario**
+
+Rol permitido: seller. HU-INV-04 y HU-INV-06. Lista historial de ajustes, reservas, liberaciones, ventas y devoluciones con filtros de auditoria.
 
 **Tags:** seller-inventory
 
 ### Parámetros de query
 
-| Nombre     | Tipo    | Requerido | Descripción |
-| ---------- | ------- | --------- | ----------- |
-| variant_id | string  |           |             |
-| limit      | integer |           |             |
+| Nombre       | Tipo    | Requerido | Descripción |
+| ------------ | ------- | --------- | ----------- |
+| product_id   | string  |           |             |
+| variant_id   | string  |           |             |
+| warehouse_id | string  |           |             |
+| reason       | string  |           |             |
+| date_from    | string  |           |             |
+| date_to      | string  |           |             |
+| limit        | integer |           |             |
 
 ### Respuesta `200`
 
-Successful Response
+Movimientos de inventario dentro del scope de la tienda.
 
 ```json
 [
@@ -1889,9 +1950,14 @@ Successful Response
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                         | Mensaje típico |
+| ------ | ------------------------------------------------- | -------------- |
+| 400    | Datos invalidos o almacen inactivo.               |                |
+| 401    | Token requerido o invalido.                       |                |
+| 403    | Requiere rol seller o recurso fuera de la tienda. |                |
+| 404    | Variante, producto o almacen no encontrado.       |                |
+| 409    | Stock insuficiente o estado incompatible.         |                |
+| 422    | Validacion Pydantic.                              |                |
 
 ---
 
@@ -2071,31 +2137,53 @@ Successful Response
 
 ## `GET` `/api/v1/cart`
 
-**Get Cart**
+**Consultar carrito**
+
+Rol permitido: buyer. HU-CHK-01 y HU-INV-07. Retorna el carrito persistente del comprador con stock vigente, precios efectivos y bloqueos antes del checkout.
 
 **Tags:** buyer
 
 ### Respuesta `200`
 
-Successful Response
+Carrito persistente actualizado con disponibilidad real.
+
+### Errores posibles
+
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol buyer.         |                |
+| 422    | Validacion Pydantic.        |                |
 
 ---
 
 ## `DELETE` `/api/v1/cart`
 
-**Clear Cart**
+**Vaciar carrito**
+
+Rol permitido: buyer. HU-CHK-01. Elimina todos los items del carrito persistente del comprador autenticado.
 
 **Tags:** buyer
 
 ### Respuesta `200`
 
-Successful Response
+Carrito vacio del comprador.
+
+### Errores posibles
+
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol buyer.         |                |
+| 422    | Validacion Pydantic.        |                |
 
 ---
 
 ## `POST` `/api/v1/cart/items`
 
-**Add Cart Item**
+**Agregar item al carrito**
+
+Rol permitido: buyer. HU-CHK-01 y HU-INV-07. Agrega una variante al carrito persistente solo si mantiene disponibilidad real agregada suficiente.
 
 **Tags:** buyer
 
@@ -2103,19 +2191,25 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Carrito actualizado con el item agregado.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                              | Mensaje típico |
+| ------ | -------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.            |                |
+| 403    | Requiere rol buyer.                    |                |
+| 404    | Variante no disponible.                |                |
+| 409    | Producto agotado o stock insuficiente. |                |
+| 422    | Validacion Pydantic.                   |                |
 
 ---
 
 ## `PATCH` `/api/v1/cart/items/{item_id}`
 
-**Patch Cart Item**
+**Actualizar item del carrito**
+
+Rol permitido: buyer. HU-CHK-01. Actualiza la cantidad de un item propio del carrito y recalcula disponibilidad antes de checkout.
 
 **Tags:** buyer
 
@@ -2129,19 +2223,24 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Carrito actualizado con la nueva cantidad.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol buyer.         |                |
+| 404    | Articulo no encontrado.     |                |
+| 422    | Validacion Pydantic.        |                |
 
 ---
 
 ## `DELETE` `/api/v1/cart/items/{item_id}`
 
-**Delete Cart Item**
+**Eliminar item del carrito**
+
+Rol permitido: buyer. HU-CHK-01. Elimina un item propio del carrito persistente y recalcula totales.
 
 **Tags:** buyer
 
@@ -2153,13 +2252,16 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Carrito actualizado sin el item eliminado.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol buyer.         |                |
+| 404    | Articulo no encontrado.     |                |
+| 422    | Validacion Pydantic.        |                |
 
 ---
 
@@ -2167,7 +2269,7 @@ Successful Response
 
 **Cotizar checkout**
 
-Rol permitido: buyer. HU-PROM-01, HU-PROM-02 y HU-PROM-04. Calcula precios efectivos, descuentos, cupones, cargos extra desglosados y envio antes de crear pedidos.
+Rol permitido: buyer. HU-CHK-02, HU-PROM-01, HU-PROM-02 y HU-PROM-04. Calcula precios efectivos, descuentos, cargos extra, envio por tienda/zona o a convenir y total antes de confirmar.
 
 **Tags:** buyer
 
@@ -2175,16 +2277,17 @@ Rol permitido: buyer. HU-PROM-01, HU-PROM-02 y HU-PROM-04. Calcula precios efect
 
 ### Respuesta `200`
 
-Cotizacion del checkout con descuentos y cargos separados.
+Cotizacion del checkout con desglose por tienda, cargos separados y modalidad de envio.
 
 ### Errores posibles
 
-| Código | Situación                   | Mensaje típico |
-| ------ | --------------------------- | -------------- |
-| 400    | Cupon invalido o expirado.  |                |
-| 401    | Token requerido o invalido. |                |
-| 403    | Requiere rol buyer.         |                |
-| 422    | Validacion Pydantic.        |                |
+| Código | Situación                                                       | Mensaje típico |
+| ------ | --------------------------------------------------------------- | -------------- |
+| 400    | Cupon invalido, metodo de pago no disponible o datos invalidos. |                |
+| 401    | Token requerido o invalido.                                     |                |
+| 403    | Requiere rol buyer o direccion fuera del comprador.             |                |
+| 409    | El carrito contiene items no disponibles.                       |                |
+| 422    | Validacion Pydantic.                                            |                |
 
 ---
 
@@ -2192,7 +2295,7 @@ Cotizacion del checkout con descuentos y cargos separados.
 
 **Crear checkout**
 
-Rol permitido: buyer. HU-PROM-01, HU-PROM-02 y HU-PROM-04. Crea pedidos usando precio efectivo, promociones, cupones vigentes y cargos extra desglosados por tienda.
+Rol permitido: buyer. HU-CHK-03, HU-CHK-04, HU-CHK-05, HU-CANAL-01, HU-PROM-01, HU-PROM-02, HU-PROM-04 y HU-INV-02. Valida stock final, crea una compra agrupada y un pedido por tienda, reserva/descuenta inventario y retorna el resumen de confirmacion.
 
 **Tags:** buyer
 
@@ -2200,7 +2303,7 @@ Rol permitido: buyer. HU-PROM-01, HU-PROM-02 y HU-PROM-04. Crea pedidos usando p
 
 ### Respuesta `201`
 
-Pedidos creados con pagos pendientes y ajustes historicos.
+Confirmacion con compra agrupada, pedidos creados, resumen completo y notas de envio.
 
 ### Errores posibles
 
@@ -2209,26 +2312,22 @@ Pedidos creados con pagos pendientes y ajustes historicos.
 | 400    | Carrito vacio, cupon invalido o metodo de pago no disponible. |                |
 | 401    | Token requerido o invalido.                                   |                |
 | 403    | Direccion fuera del comprador.                                |                |
-| 409    | Stock insuficiente.                                           |                |
+| 409    | Stock insuficiente o item no disponible.                      |                |
 | 422    | Validacion Pydantic.                                          |                |
 
 ---
 
-## `GET` `/api/v1/orders`
+## `GET` `/api/v1/purchases`
 
-**Buyer Orders**
+**Listar compras agrupadas**
+
+Rol permitido: buyer. HU-CHK-05. Lista compras agrupadas del comprador con el estado de cada tienda por separado.
 
 **Tags:** buyer
 
-### Parámetros de query
-
-| Nombre | Tipo   | Requerido | Descripción |
-| ------ | ------ | --------- | ----------- |
-| status | string |           |             |
-
 ### Respuesta `200`
 
-Successful Response
+Compras agrupadas propias del comprador autenticado.
 
 ```json
 [
@@ -2238,15 +2337,82 @@ Successful Response
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol buyer.         |                |
+| 422    | Validacion Pydantic.        |                |
+
+---
+
+## `GET` `/api/v1/purchases/{purchase_id}`
+
+**Consultar compra agrupada**
+
+Rol permitido: buyer. HU-CHK-05. Consulta una compra agrupada propia y muestra los pedidos/estados por tienda.
+
+**Tags:** buyer
+
+### Parámetros de ruta
+
+| Nombre      | Tipo   | Requerido | Descripción |
+| ----------- | ------ | --------- | ----------- |
+| purchase_id | string | ✓         |             |
+
+### Respuesta `200`
+
+Compra agrupada propia con pedidos por tienda.
+
+### Errores posibles
+
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol buyer.         |                |
+| 404    | Compra no encontrada.       |                |
+| 422    | Validacion Pydantic.        |                |
+
+---
+
+## `GET` `/api/v1/orders`
+
+**Listar pedidos del comprador**
+
+Rol permitido: buyer. HU-CHK-05. Lista pedidos propios; para compras multi-tienda usar tambien /purchases para vista agrupada.
+
+**Tags:** buyer
+
+### Parámetros de query
+
+| Nombre | Tipo   | Requerido | Descripción                    |
+| ------ | ------ | --------- | ------------------------------ |
+| status | string |           | Estado de pedido para filtrar. |
+
+### Respuesta `200`
+
+Pedidos propios del comprador autenticado.
+
+```json
+[
+  {}
+]
+```
+
+### Errores posibles
+
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol buyer.         |                |
+| 422    | Validacion Pydantic.        |                |
 
 ---
 
 ## `GET` `/api/v1/orders/{order_id}`
 
-**Buyer Order**
+**Consultar pedido del comprador**
+
+Rol permitido: buyer. HU-CHK-05. Consulta solo un pedido propio asignado a una tienda.
 
 **Tags:** buyer
 
@@ -2258,19 +2424,24 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Detalle del pedido propio.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol buyer.         |                |
+| 404    | Pedido no encontrado.       |                |
+| 422    | Validacion Pydantic.        |                |
 
 ---
 
 ## `POST` `/api/v1/orders/{order_id}/cancel`
 
-**Cancel Order**
+**Cancelar pedido**
+
+Rol permitido: buyer. HU-INV-04. Cancela un pedido propio permitido y libera o repone inventario segun su etapa.
 
 **Tags:** buyer
 
@@ -2282,13 +2453,17 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Pedido cancelado con inventario conciliado.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol buyer.         |                |
+| 404    | Pedido no encontrado.       |                |
+| 409    | Pedido ya no cancelable.    |                |
+| 422    | Validacion Pydantic.        |                |
 
 ---
 
@@ -2373,26 +2548,31 @@ Successful Response
 
 ## `GET` `/api/v1/seller/reports/sales`
 
-**Seller Sales Report**
+**Comparar ventas por canal**
+
+Rol permitido: seller. HU-CANAL-03. Retorna ventas online y presenciales de la tienda autenticada en un rango de fechas inclusivo, excluyendo pedidos cancelados y mostrando cero cuando un canal no tuvo ventas.
 
 **Tags:** seller
 
 ### Parámetros de query
 
-| Nombre    | Tipo   | Requerido | Descripción |
-| --------- | ------ | --------- | ----------- |
-| date_from | string |           |             |
-| date_to   | string |           |             |
+| Nombre    | Tipo   | Requerido | Descripción                          |
+| --------- | ------ | --------- | ------------------------------------ |
+| date_from | string |           | Fecha inicial inclusiva del reporte. |
+| date_to   | string |           | Fecha final inclusiva del reporte.   |
 
 ### Respuesta `200`
 
-Successful Response
+Reporte comparativo con totales generales y desglose por canal.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                                         | Mensaje típico |
+| ------ | ----------------------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                                       |                |
+| 403    | Requiere rol seller o cambio obligatorio de contrasena pendiente. |                |
+| 404    | Recurso no encontrado.                                            |                |
+| 422    | Validacion Pydantic.                                              |                |
 
 ---
 
@@ -2427,7 +2607,9 @@ Usuarios asociados a la tienda del vendedor.
 
 ## `GET` `/api/v1/seller/orders`
 
-**Seller Orders**
+**Listar pedidos de mi tienda**
+
+Rol permitido: seller. HU-CHK-05. Lista solo pedidos asignados a la tienda del seller o su equipo, aunque la compra del comprador tenga varias tiendas.
 
 **Tags:** seller
 
@@ -2440,7 +2622,7 @@ Usuarios asociados a la tienda del vendedor.
 
 ### Respuesta `200`
 
-Successful Response
+Pedidos de la tienda autenticada.
 
 ```json
 [
@@ -2450,15 +2632,19 @@ Successful Response
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                  | Mensaje típico |
+| ------ | ------------------------------------------ | -------------- |
+| 401    | Token requerido o invalido.                |                |
+| 403    | Requiere rol seller o tienda no permitida. |                |
+| 422    | Validacion Pydantic.                       |                |
 
 ---
 
 ## `PATCH` `/api/v1/seller/orders/{order_id}/status`
 
-**Patch Order Status**
+**Actualizar estado de pedido**
+
+Rol permitido: seller. HU-INV-04. Actualiza el estado de un pedido propio y repone o libera inventario cuando se cancela o devuelve.
 
 **Tags:** seller
 
@@ -2472,19 +2658,26 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Pedido actualizado con inventario conciliado segun el estado.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                                       | Mensaje típico |
+| ------ | --------------------------------------------------------------- | -------------- |
+| 400    | Datos invalidos o almacen inactivo.                             |                |
+| 401    | Token requerido o invalido.                                     |                |
+| 403    | Requiere rol seller o pedido fuera de la tienda.                |                |
+| 404    | Pedido o almacen no encontrado.                                 |                |
+| 409    | Transicion invalida, stock insuficiente o pedido ya descontado. |                |
+| 422    | Validacion Pydantic.                                            |                |
 
 ---
 
 ## `PATCH` `/api/v1/seller/orders/{order_id}/warehouse`
 
-**Assign Order Warehouse**
+**Asignar almacen de despacho**
+
+Rol permitido: seller. HU-INV-03. Asigna el almacen de despacho de un pedido propio y descuenta firmemente el stock reservado desde ese almacen.
 
 **Tags:** seller
 
@@ -2498,19 +2691,26 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Pedido con almacen asignado y movimientos de salida registrados.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                                       | Mensaje típico |
+| ------ | --------------------------------------------------------------- | -------------- |
+| 400    | Datos invalidos o almacen inactivo.                             |                |
+| 401    | Token requerido o invalido.                                     |                |
+| 403    | Requiere rol seller o pedido fuera de la tienda.                |                |
+| 404    | Pedido o almacen no encontrado.                                 |                |
+| 409    | Transicion invalida, stock insuficiente o pedido ya descontado. |                |
+| 422    | Validacion Pydantic.                                            |                |
 
 ---
 
 ## `POST` `/api/v1/seller/pos/orders`
 
-**Create Pos Order**
+**Crear venta presencial**
+
+Rol permitido: seller. HU-CANAL-01 y HU-CANAL-02. Registra una venta mini-POS en canal presencial, sin exigir comprador, validando pertenencia de variantes y stock real antes de descontar inventario inmediatamente.
 
 **Tags:** seller
 
@@ -2518,13 +2718,18 @@ Successful Response
 
 ### Respuesta `201`
 
-Successful Response
+Pedido presencial creado, entregado, con pago POS pagado e inventario descontado.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                            | Mensaje típico |
+| ------ | ---------------------------------------------------- | -------------- |
+| 400    | La tienda no tiene almacen activo para vender.       |                |
+| 401    | Token requerido o invalido.                          |                |
+| 403    | Requiere rol seller o tienda no permitida.           |                |
+| 404    | Comprador inexistente o variante fuera de la tienda. |                |
+| 409    | Stock insuficiente; informa la disponibilidad real.  |                |
+| 422    | Validacion Pydantic.                                 |                |
 
 ---
 
@@ -2986,7 +3191,7 @@ Successful Response
 
 **Deactivate Payout Account**
 
-Baja lógica: conserva la referencia en pedidos ya pagados con esa cuenta.
+Baja lÃ³gica: conserva la referencia en pedidos ya pagados con esa cuenta.
 
 **Tags:** seller
 
@@ -3012,7 +3217,7 @@ Successful Response
 
 **Seller Payments**
 
-Bandeja de pagos manuales de la tienda (por defecto, los que esperan revisión).
+Bandeja de pagos manuales de la tienda (por defecto, los que esperan revisiÃ³n).
 
 **Tags:** seller
 
@@ -3038,7 +3243,7 @@ Successful Response
 
 **Confirm Manual Payment**
 
-El vendedor confirma que el dinero llegó, registrando el monto recibido.
+El vendedor confirma que el dinero llegÃ³, registrando el monto recibido.
 
 **Tags:** seller
 

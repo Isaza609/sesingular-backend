@@ -99,3 +99,39 @@ def payment_rejected_to_buyer(to: str | None, order_id: str, note: str | None) -
             "<p>Puedes subir un comprobante nuevo desde tu cuenta o contactar al vendedor.</p>",
         ),
     )
+
+
+def checkout_summary_to_buyer(to: str | None, confirmation: dict) -> None:
+    summary = confirmation.get("summary", {})
+    store_quotes = summary.get("store_quotes", [])
+    orders = confirmation.get("orders", [])
+    total = f"${summary.get('total', 0):,.0f} COP".replace(",", ".")
+    rows = "".join(
+        (
+            "<li>"
+            f"<b>{quote.get('store_name')}</b>: "
+            f"{len(quote.get('items', []))} item(s), total "
+            f"${quote.get('total', 0):,.0f} COP"
+            f" · envio: {quote.get('shipping', {}).get('label') or 'configurado'}"
+            "</li>"
+        )
+        for quote in store_quotes
+    )
+    order_ids = ", ".join(
+        order.get("id", "") if isinstance(order, dict) else getattr(order, "id", "")
+        for order in orders
+    )
+    notes = "".join(f"<p><b>Nota de envio:</b> {note}</p>" for note in confirmation.get("shipping_notes", []))
+    send_email(
+        to,
+        f"Resumen de tu compra · {confirmation.get('purchase_id')}",
+        _layout(
+            "Compra confirmada",
+            f"<p>Confirmamos tu compra <b>{confirmation.get('purchase_id')}</b>.</p>"
+            f"<p><b>Pedidos:</b> {order_ids}</p>"
+            f"<p><b>Total:</b> {total}</p>"
+            f"<p><b>Metodo de pago:</b> {summary.get('payment_method')}</p>"
+            f"<ul>{rows}</ul>"
+            f"{notes}",
+        ),
+    )

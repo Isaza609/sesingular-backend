@@ -4,7 +4,7 @@ from app.models.user import User
 from app.models.store import Store, StoreMember, Warehouse
 from app.models.catalog import Category, Product, ProductCategory, ProductImage, ProductVariant
 from app.models.inventory import InventoryMovement, StockLevel
-from app.models.order import Address, Order, OrderAdjustment, OrderItem
+from app.models.order import Address, CheckoutGroup, Order, OrderAdjustment, OrderItem
 from app.models.payment import Payment
 from app.models.shipping import Shipment
 from app.models.cart import Cart, CartItem
@@ -27,6 +27,7 @@ __all__ = [
     "StockLevel",
     "InventoryMovement",
     "Address",
+    "CheckoutGroup",
     "Order",
     "OrderAdjustment",
     "OrderItem",

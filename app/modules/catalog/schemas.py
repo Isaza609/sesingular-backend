@@ -240,6 +240,19 @@ class ProductPatch(BaseModel):
     )
 
 
+class ProductStoreContactOut(BaseModel):
+    email: str | None = Field(default=None, description="Correo publico de contacto de la tienda.", example="hola@nova.example")
+    phone: str | None = Field(default=None, description="Telefono publico de contacto de la tienda.", example="+573001112233")
+    whatsapp_phone: str | None = Field(default=None, description="WhatsApp publico de la tienda para coordinar envio o venta.", example="+573001112233")
+
+
+class ProductShippingOut(BaseModel):
+    flat_cost: int = Field(description="Costo plano de envio configurado por la tienda en COP.", example=12900)
+    free_threshold: int = Field(description="Subtotal desde el cual la tienda ofrece envio gratis.", example=120000)
+    zones: list[dict] = Field(default_factory=list, description="Zonas de envio configuradas por la tienda.", example=[])
+    to_agree: bool = Field(description="Indica si el frontend debe mostrar envio a convenir/contactar vendedor.", example=False)
+
+
 class ProductOut(BaseModel):
     id: str = Field(description="Identificador del producto.", example="prod-camisa")
     store_id: str = Field(description="Tienda propietaria.", example="store-nova")
@@ -258,6 +271,8 @@ class ProductOut(BaseModel):
     stock: int = Field(description="Stock disponible agregado.", example=5)
     price: int = Field(description="Precio inicial o minimo mostrado.", example=70000)
     compare_at: int | None = Field(default=None, description="Precio de referencia inicial.", example=85000)
+    store_contact: ProductStoreContactOut | None = Field(default=None, description="Datos publicos de contacto de la tienda para la ficha.")
+    shipping: ProductShippingOut | None = Field(default=None, description="Informacion publica de envio aplicable a la ficha.")
     created_at: datetime = Field(description="Fecha de creacion.")
     updated_at: datetime = Field(description="Fecha de actualizacion.")
 
@@ -342,9 +357,19 @@ class PaymentMethodsConfig(BaseModel):
 
 class StoreSettingsIn(BaseModel):
     payment_methods: PaymentMethodsConfig = Field(default_factory=PaymentMethodsConfig, description="Metodos de pago aceptados por la tienda.")
+    shipping_mode: str = Field(
+        default="flat",
+        description="Modalidad de envio de la tienda: flat, zones o to_agree.",
+        pattern="^(flat|zones|to_agree)$",
+        example="zones",
+    )
     shipping_flat_cost: int = Field(default=12900, description="Costo plano de envio de la tienda.", ge=0, example=12900)
     shipping_free_threshold: int = Field(default=120000, description="Subtotal desde el cual el envio es gratis.", ge=0, example=120000)
-    shipping_zones: list[dict] = Field(default_factory=list, description="Zonas de envio configuradas por la tienda.", example=[])
+    shipping_zones: list[dict] = Field(
+        default_factory=list,
+        description="Zonas de envio configuradas por la tienda con city/region/cost/active/free_shipping opcionales.",
+        example=[{"city": "Bogota", "region": "Cundinamarca", "cost": 12000, "active": True}],
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -354,9 +379,10 @@ class StoreSettingsIn(BaseModel):
                     "manual_transfer_enabled": True,
                     "manual_breb_enabled": False,
                 },
+                "shipping_mode": "zones",
                 "shipping_flat_cost": 12900,
                 "shipping_free_threshold": 120000,
-                "shipping_zones": [],
+                "shipping_zones": [{"city": "Bogota", "region": "Cundinamarca", "cost": 12000, "active": True}],
             }
         }
     }

@@ -192,3 +192,40 @@ class SellerStoreMemberOut(BaseModel):
     must_change_password: bool = Field(description="Indica si debe cambiar contrasena antes de operar.", example=False)
     created_at: datetime = Field(description="Fecha en que fue asociado a la tienda.", example="2026-08-05T10:00:00Z")
 
+
+class SalesChannelLineOut(BaseModel):
+    channel: str = Field(description="Canal de venta reportado: online o presencial.", pattern="^(online|presencial)$", example="online")
+    orders: int = Field(description="Cantidad de pedidos no cancelados del canal.", ge=0, example=12)
+    gross: int = Field(description="Valor bruto vendido por el canal en COP.", ge=0, example=780000)
+
+
+class SalesChannelTotalsOut(BaseModel):
+    orders: int = Field(description="Cantidad total de pedidos no cancelados del rango.", ge=0, example=18)
+    gross: int = Field(description="Suma total de ventas online y presenciales en COP.", ge=0, example=1250000)
+    costs: int = Field(description="Costo historico total de los items vendidos en COP.", ge=0, example=420000)
+    platform_fees: int = Field(description="Comisiones de plataforma pagadas asociadas al rango en COP.", ge=0, example=50000)
+    profit: int = Field(description="Utilidad estimada despues de costos y comisiones en COP.", example=780000)
+
+
+class SalesChannelReportOut(BaseModel):
+    totals: SalesChannelTotalsOut = Field(description="Totales generales del rango seleccionado.")
+    by_channel: list[SalesChannelLineOut] = Field(description="Totales por canal; siempre incluye online y presencial.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "totals": {
+                    "orders": 18,
+                    "gross": 1250000,
+                    "costs": 420000,
+                    "platform_fees": 50000,
+                    "profit": 780000,
+                },
+                "by_channel": [
+                    {"channel": "online", "orders": 12, "gross": 780000},
+                    {"channel": "presencial", "orders": 6, "gross": 470000},
+                ],
+            }
+        }
+    )
+

@@ -12,7 +12,7 @@ from app.models.order import OrderStatus
 from app.models.payment import PaymentStatus
 from app.models.user import User
 from app.modules.common.permissions import require_buyer
-from app.modules.inventory.service import release_order
+from app.modules.inventory.service import restock_order
 from app.modules.orders.router import _order_out
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -74,7 +74,7 @@ def payment_webhook(
     if payment.status == PaymentStatus.paid:
         order.status = OrderStatus.confirmed
     elif payment.status in (PaymentStatus.rejected, PaymentStatus.refunded) and order.status not in (OrderStatus.cancelled, OrderStatus.delivered, OrderStatus.returned):
-        release_order(db, order)
+        restock_order(db, order, note="Reposicion por pago rechazado o reembolsado")
         order.status = OrderStatus.cancelled
     db.commit()
     return {"payment_id": payment.id, "order_id": order.id, "status": payment.status.value}

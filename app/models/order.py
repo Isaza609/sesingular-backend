@@ -49,10 +49,44 @@ class Address(Base):
     user = relationship("User", back_populates="addresses")
 
 
+class CheckoutGroup(Base):
+    __tablename__ = "checkout_groups"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    buyer_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    address_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.addresses.id", ondelete="SET NULL"), index=True
+    )
+    subtotal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    discount_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    extra_charge_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    shipping_cost: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tax: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="COP")
+    payment_method: Mapped[str] = mapped_column(String(60), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    buyer = relationship("User")
+    address = relationship("Address")
+    orders = relationship("Order", back_populates="checkout_group")
+
+
 class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    checkout_group_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.checkout_groups.id", ondelete="SET NULL"), index=True
+    )
     store_id: Mapped[str] = mapped_column(
         String(36), ForeignKey(f"{SCHEMA}.stores.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -90,6 +124,7 @@ class Order(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    checkout_group = relationship("CheckoutGroup", back_populates="orders")
     store = relationship("Store", back_populates="orders")
     buyer = relationship("User", back_populates="orders")
     warehouse = relationship("Warehouse")
