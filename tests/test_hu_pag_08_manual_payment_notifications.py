@@ -23,8 +23,8 @@ def _subjects(mail_calls):
     return " || ".join(call["subject"] for call in mail_calls)
 
 
-def test_subida_notifica_a_comprador_y_vendedor(integration_context):
-    client, db, token_for, mail_calls = integration_context
+def test_subida_notifica_a_comprador_y_vendedor(real_db_context):
+    client, db, token_for, mail_calls = real_db_context
     seller, buyer, order, payment = _scenario(client, db, token_for, "08a")
     client.post(f"/api/v1/orders/{order.id}/payment/receipt", files=FILE, headers=token_for(buyer.id))
     subjects = _subjects(mail_calls)
@@ -32,8 +32,8 @@ def test_subida_notifica_a_comprador_y_vendedor(integration_context):
     assert "Nuevo comprobante por revisar" in subjects  # al vendedor
 
 
-def test_confirmacion_notifica_al_comprador(integration_context):
-    client, db, token_for, mail_calls = integration_context
+def test_confirmacion_notifica_al_comprador(real_db_context):
+    client, db, token_for, mail_calls = real_db_context
     seller, buyer, order, payment = _scenario(client, db, token_for, "08b")
     client.post(f"/api/v1/orders/{order.id}/payment/receipt", files=FILE, headers=token_for(buyer.id))
     mail_calls.clear()
@@ -41,8 +41,8 @@ def test_confirmacion_notifica_al_comprador(integration_context):
     assert "Pago confirmado" in _subjects(mail_calls)
 
 
-def test_incompleto_notifica_al_comprador(integration_context):
-    client, db, token_for, mail_calls = integration_context
+def test_incompleto_notifica_al_comprador(real_db_context):
+    client, db, token_for, mail_calls = real_db_context
     seller, buyer, order, payment = _scenario(client, db, token_for, "08c")
     client.post(f"/api/v1/orders/{order.id}/payment/receipt", files=FILE, headers=token_for(buyer.id))
     mail_calls.clear()
@@ -50,8 +50,8 @@ def test_incompleto_notifica_al_comprador(integration_context):
     assert "Falta completar tu pago" in _subjects(mail_calls)
 
 
-def test_rechazo_notifica_al_comprador(integration_context):
-    client, db, token_for, mail_calls = integration_context
+def test_rechazo_notifica_al_comprador(real_db_context):
+    client, db, token_for, mail_calls = real_db_context
     seller, buyer, order, payment = _scenario(client, db, token_for, "08d")
     client.post(f"/api/v1/orders/{order.id}/payment/receipt", files=FILE, headers=token_for(buyer.id))
     mail_calls.clear()

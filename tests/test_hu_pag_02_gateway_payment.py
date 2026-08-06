@@ -21,8 +21,8 @@ def _setup(db, suffix):
     return buyer, store, order, payment
 
 
-def test_intent_crea_transaccion(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_intent_crea_transaccion(real_db_context):
+    client, db, token_for, _mail = real_db_context
     ensure_gateway(db)
     buyer, _store, order, _payment = _setup(db, "02a")
 
@@ -31,8 +31,8 @@ def test_intent_crea_transaccion(integration_context):
     assert resp.json()["provider"] == "test"
 
 
-def test_webhook_aprobado_confirma_pedido(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_webhook_aprobado_confirma_pedido(real_db_context):
+    client, db, token_for, _mail = real_db_context
     ensure_gateway(db)
     buyer, _store, order, payment = _setup(db, "02b")
     payment.provider = "test"
@@ -46,8 +46,8 @@ def test_webhook_aprobado_confirma_pedido(integration_context):
     assert db.get(Order, order.id).status == OrderStatus.confirmed
 
 
-def test_webhook_rechazado_cancela_y_repone(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_webhook_rechazado_cancela_y_repone(real_db_context):
+    client, db, token_for, _mail = real_db_context
     ensure_gateway(db)
     buyer, _store, order, payment = _setup(db, "02c")
     payment.provider = "test"
@@ -61,8 +61,8 @@ def test_webhook_rechazado_cancela_y_repone(integration_context):
     assert db.get(Order, order.id).status == OrderStatus.cancelled
 
 
-def test_webhook_firma_invalida_no_cambia_estado(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_webhook_firma_invalida_no_cambia_estado(real_db_context):
+    client, db, token_for, _mail = real_db_context
     ensure_gateway(db, webhook_secret="s3cr3t")
     buyer, _store, order, payment = _setup(db, "02d")
     payment.provider = "test"
@@ -74,8 +74,8 @@ def test_webhook_firma_invalida_no_cambia_estado(integration_context):
     assert db.get(Payment, payment.id).status == PaymentStatus.pending
 
 
-def test_webhook_estado_no_soportado(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_webhook_estado_no_soportado(real_db_context):
+    client, db, token_for, _mail = real_db_context
     ensure_gateway(db)
     buyer, _store, order, payment = _setup(db, "02e")
     payment.provider = "test"

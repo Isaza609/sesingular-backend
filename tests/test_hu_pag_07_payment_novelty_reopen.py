@@ -29,8 +29,8 @@ def _in_review(client, db, token_for, suffix, quantity=2):
     return seller, store, buyer, order, payment, variant
 
 
-def test_reabrir_por_monto_de_menos_deja_incompleto(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_reabrir_por_monto_de_menos_deja_incompleto(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, payment, variant = _in_review(client, db, token_for, "07a")
     reserved_before = reserved_units(db, variant.id)
 
@@ -49,8 +49,8 @@ def test_reabrir_por_monto_de_menos_deja_incompleto(integration_context):
     assert db.get(Order, order.id).status == OrderStatus.pending
 
 
-def test_reopen_con_monto_igual_o_mayor_da_400(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_reopen_con_monto_igual_o_mayor_da_400(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, payment, _variant = _in_review(client, db, token_for, "07b")
     resp = client.post(
         f"/api/v1/seller/payments/{payment.id}/reopen",
@@ -60,8 +60,8 @@ def test_reopen_con_monto_igual_o_mayor_da_400(integration_context):
     assert resp.status_code == 400
 
 
-def test_comprador_sube_saldo_vuelve_a_revision(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_comprador_sube_saldo_vuelve_a_revision(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, payment, _variant = _in_review(client, db, token_for, "07c")
     client.post(
         f"/api/v1/seller/payments/{payment.id}/reopen",
@@ -73,8 +73,8 @@ def test_comprador_sube_saldo_vuelve_a_revision(integration_context):
     assert resp.json()["status"] == "in_review"
 
 
-def test_monto_de_mas_registra_acuerdo_y_contacto(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_monto_de_mas_registra_acuerdo_y_contacto(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, payment, _variant = _in_review(client, db, token_for, "07d")
     resp = client.post(
         f"/api/v1/seller/payments/{payment.id}/overpaid",
@@ -89,8 +89,8 @@ def test_monto_de_mas_registra_acuerdo_y_contacto(integration_context):
     assert body["buyer_email"] == buyer.email
 
 
-def test_novedad_queda_en_historial(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_novedad_queda_en_historial(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, payment, _variant = _in_review(client, db, token_for, "07e")
     client.post(
         f"/api/v1/seller/payments/{payment.id}/reopen",

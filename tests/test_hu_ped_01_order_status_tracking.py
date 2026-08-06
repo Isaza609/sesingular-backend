@@ -17,16 +17,16 @@ def _order(db, suffix):
     return seller, store, buyer, order, payment
 
 
-def test_estado_pedido_y_pago_separados(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_estado_pedido_y_pago_separados(real_db_context):
+    client, db, token_for, _mail = real_db_context
     _seller, _store, buyer, order, _payment = _order(db, "ped01a")
     body = client.get(f"/api/v1/orders/{order.id}", headers=token_for(buyer.id)).json()
     assert body["status"] == "pending"  # estado del pedido
     assert body["payments"][0]["status"] == "pending"  # estado del pago, separado
 
 
-def test_actualizacion_refleja_para_comprador(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_actualizacion_refleja_para_comprador(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, _payment = _order(db, "ped01b")
     r = client.patch(f"/api/v1/seller/orders/{order.id}/status", json={"status": "confirmed"}, headers=token_for(seller.id))
     assert r.status_code == 200
@@ -34,8 +34,8 @@ def test_actualizacion_refleja_para_comprador(integration_context):
     assert body["status"] == "confirmed"
 
 
-def test_transicion_invalida_da_409(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_transicion_invalida_da_409(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, _payment = _order(db, "ped01c")
     # pending -> delivered no es una transición permitida
     r = client.patch(f"/api/v1/seller/orders/{order.id}/status", json={"status": "delivered"}, headers=token_for(seller.id))

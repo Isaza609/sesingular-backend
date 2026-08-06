@@ -12,8 +12,8 @@ pytestmark = pytest.mark.integration
 BASE = "/api/v1/catalog/stores"
 
 
-def test_pasarela_y_manual_muestran_ambas_opciones(integration_context):
-    client, db, _token_for, _mail = integration_context
+def test_pasarela_y_manual_muestran_ambas_opciones(real_db_context):
+    client, db, _token_for, _mail = real_db_context
     _seller, store, _p, _v, _w = seed_store(db, "01a")
     ensure_gateway(db)
     seed_payout_account(db, store, type_=PayoutAccountType.bank)
@@ -27,8 +27,8 @@ def test_pasarela_y_manual_muestran_ambas_opciones(integration_context):
     assert len(body["payment_methods"]) >= 2
 
 
-def test_seleccionar_manual_lista_cuentas_activas(integration_context):
-    client, db, _token_for, _mail = integration_context
+def test_seleccionar_manual_lista_cuentas_activas(real_db_context):
+    client, db, _token_for, _mail = real_db_context
     _seller, store, _p, _v, _w = seed_store(db, "01b", payment_methods={"gateway_enabled": False, "manual_transfer_enabled": True, "manual_breb_enabled": False})
     seed_payout_account(db, store, type_=PayoutAccountType.bank)
     db.commit()
@@ -39,8 +39,8 @@ def test_seleccionar_manual_lista_cuentas_activas(integration_context):
     assert body["payout_accounts"][0]["type"] == "bank"
 
 
-def test_un_solo_metodo_habilitado(integration_context):
-    client, db, _token_for, _mail = integration_context
+def test_un_solo_metodo_habilitado(real_db_context):
+    client, db, _token_for, _mail = real_db_context
     _seller, store, _p, _v, _w = seed_store(db, "01c", payment_methods={"gateway_enabled": False, "manual_transfer_enabled": False, "manual_breb_enabled": True})
     seed_payout_account(db, store, type_=PayoutAccountType.bre_b)
     db.commit()
@@ -49,8 +49,8 @@ def test_un_solo_metodo_habilitado(integration_context):
     assert body["payment_methods"] == ["breb"]
 
 
-def test_metodo_deshabilitado_no_aparece(integration_context):
-    client, db, _token_for, _mail = integration_context
+def test_metodo_deshabilitado_no_aparece(real_db_context):
+    client, db, _token_for, _mail = real_db_context
     _seller, store, _p, _v, _w = seed_store(db, "01d", payment_methods={"gateway_enabled": False, "manual_transfer_enabled": True, "manual_breb_enabled": False})
     # Cuenta Bre-B existe pero el método Bre-B está deshabilitado: no debe aparecer.
     seed_payout_account(db, store, type_=PayoutAccountType.bre_b)

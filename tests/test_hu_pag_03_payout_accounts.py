@@ -19,8 +19,8 @@ def _seller_headers(db, token_for, suffix):
 
 # --- HU-PAG-03 -------------------------------------------------------------
 
-def test_registrar_cuenta_bancaria(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_registrar_cuenta_bancaria(real_db_context):
+    client, db, token_for, _mail = real_db_context
     headers, _store = _seller_headers(db, token_for, "03a")
     resp = client.post("/api/v1/seller/payout-accounts", json=BANK, headers=headers)
     assert resp.status_code == 201
@@ -28,16 +28,16 @@ def test_registrar_cuenta_bancaria(integration_context):
     assert resp.json()["active"] is True
 
 
-def test_registrar_llave_breb(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_registrar_llave_breb(real_db_context):
+    client, db, token_for, _mail = real_db_context
     headers, _store = _seller_headers(db, token_for, "03b")
     resp = client.post("/api/v1/seller/payout-accounts", json=BREB, headers=headers)
     assert resp.status_code == 201
     assert resp.json()["breb_key"] == "nova@breb"
 
 
-def test_cuenta_bancaria_incompleta_es_rechazada(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_cuenta_bancaria_incompleta_es_rechazada(real_db_context):
+    client, db, token_for, _mail = real_db_context
     headers, _store = _seller_headers(db, token_for, "03c")
     resp = client.post("/api/v1/seller/payout-accounts", json={"type": "bank", "holder_name": "Nova"}, headers=headers)
     assert resp.status_code == 422
@@ -45,8 +45,8 @@ def test_cuenta_bancaria_incompleta_es_rechazada(integration_context):
 
 # --- HU-PAG-04 -------------------------------------------------------------
 
-def test_desactivar_y_reactivar_cuenta(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_desactivar_y_reactivar_cuenta(real_db_context):
+    client, db, token_for, _mail = real_db_context
     headers, _store = _seller_headers(db, token_for, "04a")
     account_id = client.post("/api/v1/seller/payout-accounts", json=BANK, headers=headers).json()["id"]
 
@@ -57,8 +57,8 @@ def test_desactivar_y_reactivar_cuenta(integration_context):
     assert on.status_code == 200 and on.json()["active"] is True
 
 
-def test_cuenta_de_otra_tienda_da_404(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_cuenta_de_otra_tienda_da_404(real_db_context):
+    client, db, token_for, _mail = real_db_context
     headers_a, _store_a = _seller_headers(db, token_for, "04b")
     account_id = client.post("/api/v1/seller/payout-accounts", json=BANK, headers=headers_a).json()["id"]
 

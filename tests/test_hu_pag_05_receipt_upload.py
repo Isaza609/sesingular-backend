@@ -20,8 +20,8 @@ def _scenario(db, suffix):
     return buyer, store, order, payment, account
 
 
-def test_estado_pendiente_sin_comprobante(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_estado_pendiente_sin_comprobante(real_db_context):
+    client, db, token_for, _mail = real_db_context
     buyer, _store, order, _payment, _acc = _scenario(db, "05a")
     resp = client.get(f"/api/v1/orders/{order.id}/payment", headers=token_for(buyer.id))
     assert resp.status_code == 200
@@ -31,8 +31,8 @@ def test_estado_pendiente_sin_comprobante(integration_context):
     assert body["payout_account"] is not None
 
 
-def test_subir_comprobante_deja_en_revision(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_subir_comprobante_deja_en_revision(real_db_context):
+    client, db, token_for, _mail = real_db_context
     buyer, _store, order, payment, _acc = _scenario(db, "05b")
     resp = client.post(f"/api/v1/orders/{order.id}/payment/receipt", files=FILE, headers=token_for(buyer.id))
     assert resp.status_code == 200
@@ -43,8 +43,8 @@ def test_subir_comprobante_deja_en_revision(integration_context):
     assert db.get(Payment, payment.id).status == PaymentStatus.in_review
 
 
-def test_reemplazo_tras_rechazo(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_reemplazo_tras_rechazo(real_db_context):
+    client, db, token_for, _mail = real_db_context
     buyer, _store, order, payment, _acc = _scenario(db, "05c")
     client.post(f"/api/v1/orders/{order.id}/payment/receipt", files=FILE, headers=token_for(buyer.id))
     # el vendedor rechaza -> pago_rechazado; el comprador ya no puede resubir (pedido cancelado)
@@ -54,8 +54,8 @@ def test_reemplazo_tras_rechazo(integration_context):
     assert resp.json()["status"] == "in_review"
 
 
-def test_pedido_ajeno_da_404(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_pedido_ajeno_da_404(real_db_context):
+    client, db, token_for, _mail = real_db_context
     buyer, _store, order, _payment, _acc = _scenario(db, "05d")
     otro = seed_buyer(db, "05d-otro")
     resp = client.get(f"/api/v1/orders/{order.id}/payment", headers=token_for(otro.id))

@@ -17,15 +17,15 @@ def _order(db, suffix):
     return seller, store, buyer, order
 
 
-def test_comprador_ve_su_historial(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_comprador_ve_su_historial(real_db_context):
+    client, db, token_for, _mail = real_db_context
     _seller, _store, buyer, order = _order(db, "ped03a")
     rows = client.get("/api/v1/orders", headers=token_for(buyer.id)).json()
     assert any(o["id"] == order.id for o in rows)
 
 
-def test_vendedor_ve_solo_su_tienda(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_vendedor_ve_solo_su_tienda(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller_a, store_a, buyer_a, order_a = _order(db, "ped03b")
     seller_b, store_b, buyer_b, order_b = _order(db, "ped03b2")
     rows = client.get("/api/v1/seller/orders", headers=token_for(seller_a.id)).json()
@@ -34,8 +34,8 @@ def test_vendedor_ve_solo_su_tienda(integration_context):
     assert order_b.id not in ids
 
 
-def test_filtro_por_estado(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_filtro_por_estado(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order = _order(db, "ped03c")
     rows = client.get("/api/v1/seller/orders", params={"status": "cancelled"}, headers=token_for(seller.id)).json()
     assert rows == []
@@ -43,8 +43,8 @@ def test_filtro_por_estado(integration_context):
     assert any(o["id"] == order.id for o in rows)
 
 
-def test_filtro_por_fecha_futura_vacia(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_filtro_por_fecha_futura_vacia(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order = _order(db, "ped03d")
     rows = client.get("/api/v1/seller/orders", params={"date_from": "2099-01-01"}, headers=token_for(seller.id)).json()
     assert rows == []

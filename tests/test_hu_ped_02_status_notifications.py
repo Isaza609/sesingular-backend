@@ -24,16 +24,16 @@ def _subjects(mail_calls):
     return " || ".join(c["subject"] for c in mail_calls)
 
 
-def test_cambio_de_estado_notifica_al_comprador(integration_context):
-    client, db, token_for, mail_calls = integration_context
+def test_cambio_de_estado_notifica_al_comprador(real_db_context):
+    client, db, token_for, mail_calls = real_db_context
     seller, store, buyer, order, _wh = _order(db, "ped02a")
     mail_calls.clear()
     client.patch(f"/api/v1/seller/orders/{order.id}/status", json={"status": "confirmed"}, headers=token_for(seller.id))
     assert "confirmado" in _subjects(mail_calls)
 
 
-def test_despacho_notifica_a_comprador_y_vendedor(integration_context):
-    client, db, token_for, mail_calls = integration_context
+def test_despacho_notifica_a_comprador_y_vendedor(real_db_context):
+    client, db, token_for, mail_calls = real_db_context
     seller, store, buyer, order, warehouse = _order(db, "ped02b")
     # avanzar hasta preparing y asignar almacen antes de despachar
     client.patch(f"/api/v1/seller/orders/{order.id}/status", json={"status": "confirmed"}, headers=token_for(seller.id))

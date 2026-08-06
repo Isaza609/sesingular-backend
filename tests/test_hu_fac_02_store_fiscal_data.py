@@ -25,8 +25,8 @@ def _confirm(client, token_for, seller, buyer, order, payment):
     client.post(f"/api/v1/seller/payments/{payment.id}/confirm", json={"received_amount": order.total}, headers=token_for(seller.id))
 
 
-def test_admin_registra_fiscal_y_aparece_en_comprobante(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_admin_registra_fiscal_y_aparece_en_comprobante(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, product, variant, warehouse = seed_store(db, "fac02a")
     buyer = seed_buyer(db, "fac02a")
     admin = _admin(db, "fac02a")
@@ -43,8 +43,8 @@ def test_admin_registra_fiscal_y_aparece_en_comprobante(integration_context):
     assert body["store_fiscal"]["tax_id"] == "900123456-7"
 
 
-def test_vendedor_consulta_sus_datos_fiscales(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_vendedor_consulta_sus_datos_fiscales(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, product, variant, warehouse = seed_store(db, "fac02b")
     admin = _admin(db, "fac02b")
     client.patch(f"/api/v1/admin/stores/{store.id}", json={"legal_name": "Nova SAS", "tax_id": "111"}, headers=token_for(admin.id))
@@ -55,8 +55,8 @@ def test_vendedor_consulta_sus_datos_fiscales(integration_context):
     assert resp.json()["tax_id"] == "111"
 
 
-def test_correccion_aplica_solo_a_comprobantes_nuevos(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_correccion_aplica_solo_a_comprobantes_nuevos(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, product, variant, warehouse = seed_store(db, "fac02c")
     buyer = seed_buyer(db, "fac02c")
     admin = _admin(db, "fac02c")

@@ -30,8 +30,8 @@ def _paid_scenario(client, db, token_for, suffix):
     return seller, store, buyer, order, payment
 
 
-def test_listado_de_transacciones_con_trazabilidad(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_listado_de_transacciones_con_trazabilidad(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, payment = _paid_scenario(client, db, token_for, "09a")
     admin = _seed_admin(db, "09a")
 
@@ -45,8 +45,8 @@ def test_listado_de_transacciones_con_trazabilidad(integration_context):
     assert row["status"] == "paid"
 
 
-def test_detalle_conserva_historial_de_estados(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_detalle_conserva_historial_de_estados(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, payment = _paid_scenario(client, db, token_for, "09b")
     admin = _seed_admin(db, "09b")
 
@@ -59,8 +59,8 @@ def test_detalle_conserva_historial_de_estados(integration_context):
     assert states[-1] == "paid"
 
 
-def test_filtro_por_estado(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_filtro_por_estado(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, payment = _paid_scenario(client, db, token_for, "09c")
     admin = _seed_admin(db, "09c")
 
@@ -69,8 +69,8 @@ def test_filtro_por_estado(integration_context):
     assert all(r["status"] == "paid" for r in resp.json()["items"])
 
 
-def test_no_admin_no_puede_conciliar(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_no_admin_no_puede_conciliar(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, payment = _paid_scenario(client, db, token_for, "09d")
     resp = client.get("/api/v1/admin/transactions", headers=token_for(buyer.id))
     assert resp.status_code == 403

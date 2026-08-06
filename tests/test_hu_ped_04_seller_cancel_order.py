@@ -26,8 +26,8 @@ def _order(db, suffix):
     return seller, store, buyer, order, variant
 
 
-def test_anular_libera_stock_y_registra_motivo(integration_context):
-    client, db, token_for, mail_calls = integration_context
+def test_anular_libera_stock_y_registra_motivo(real_db_context):
+    client, db, token_for, mail_calls = real_db_context
     seller, store, buyer, order, variant = _order(db, "ped04a")
     assert reserved_units(db, variant.id) == 2
 
@@ -40,8 +40,8 @@ def test_anular_libera_stock_y_registra_motivo(integration_context):
     assert any("cancelado" in c["subject"].lower() for c in mail_calls)
 
 
-def test_movimiento_de_liberacion_registrado(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_movimiento_de_liberacion_registrado(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, variant = _order(db, "ped04b")
     client.post(f"/api/v1/seller/orders/{order.id}/cancel", json={"reason": "Sin pago"}, headers=token_for(seller.id))
     releases = db.query(InventoryMovement).filter(
@@ -50,8 +50,8 @@ def test_movimiento_de_liberacion_registrado(integration_context):
     assert releases
 
 
-def test_pedido_despachado_no_se_anula(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_pedido_despachado_no_se_anula(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, variant = _order(db, "ped04c")
     # forzar estado despachado para probar la guarda
     db.get(Order, order.id).status = OrderStatus.shipped
@@ -60,8 +60,8 @@ def test_pedido_despachado_no_se_anula(integration_context):
     assert resp.status_code == 409
 
 
-def test_reason_obligatorio(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_reason_obligatorio(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order, variant = _order(db, "ped04d")
     resp = client.post(f"/api/v1/seller/orders/{order.id}/cancel", json={}, headers=token_for(seller.id))
     assert resp.status_code == 422

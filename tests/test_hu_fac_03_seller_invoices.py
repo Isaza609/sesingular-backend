@@ -21,8 +21,8 @@ def _confirmed(client, db, token_for, suffix):
     return seller, store, buyer, order
 
 
-def test_listado_de_comprobantes_de_la_tienda(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_listado_de_comprobantes_de_la_tienda(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order = _confirmed(client, db, token_for, "fac03a")
     resp = client.get("/api/v1/seller/invoices", headers=token_for(seller.id))
     assert resp.status_code == 200
@@ -32,8 +32,8 @@ def test_listado_de_comprobantes_de_la_tienda(integration_context):
     assert rows[0]["total"] == order.total
 
 
-def test_descarga_por_el_vendedor(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_descarga_por_el_vendedor(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order = _confirmed(client, db, token_for, "fac03b")
     invoice_id = client.get("/api/v1/seller/invoices", headers=token_for(seller.id)).json()[0]["id"]
     resp = client.get(f"/api/v1/seller/invoices/{invoice_id}/download", headers=token_for(seller.id))
@@ -41,16 +41,16 @@ def test_descarga_por_el_vendedor(integration_context):
     assert "text/html" in resp.headers["content-type"]
 
 
-def test_filtro_por_estado(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_filtro_por_estado(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order = _confirmed(client, db, token_for, "fac03c")
     resp = client.get("/api/v1/seller/invoices", params={"status": "cancelled"}, headers=token_for(seller.id))
     assert resp.status_code == 200
     assert resp.json() == []
 
 
-def test_comprobante_de_otra_tienda_da_404(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_comprobante_de_otra_tienda_da_404(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller_a, store_a, buyer, order = _confirmed(client, db, token_for, "fac03d")
     invoice_id = client.get("/api/v1/seller/invoices", headers=token_for(seller_a.id)).json()[0]["id"]
     seller_b, _store_b, _p, _v, _w = seed_store(db, "fac03d-otra")

@@ -29,8 +29,8 @@ def _confirmed_order(client, db, token_for, suffix, *, with_charge=False):
     return seller, store, buyer, order
 
 
-def test_comprobante_se_emite_al_confirmar_pago(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_comprobante_se_emite_al_confirmar_pago(real_db_context):
+    client, db, token_for, _mail = real_db_context
     _seller, _store, buyer, order = _confirmed_order(client, db, token_for, "fac01a")
     resp = client.get(f"/api/v1/orders/{order.id}/invoice", headers=token_for(buyer.id))
     assert resp.status_code == 200
@@ -41,8 +41,8 @@ def test_comprobante_se_emite_al_confirmar_pago(integration_context):
     assert body["number"] >= 1
 
 
-def test_cargos_extra_desglosados(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_cargos_extra_desglosados(real_db_context):
+    client, db, token_for, _mail = real_db_context
     _seller, _store, buyer, order = _confirmed_order(client, db, token_for, "fac01b", with_charge=True)
     body = client.get(f"/api/v1/orders/{order.id}/invoice", headers=token_for(buyer.id)).json()
     names = [c["name"] for c in body["charges"]]
@@ -50,8 +50,8 @@ def test_cargos_extra_desglosados(integration_context):
     assert body["extra_charge_total"] == 5000
 
 
-def test_descarga_html(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_descarga_html(real_db_context):
+    client, db, token_for, _mail = real_db_context
     _seller, _store, buyer, order = _confirmed_order(client, db, token_for, "fac01c")
     resp = client.get(f"/api/v1/orders/{order.id}/invoice/download", headers=token_for(buyer.id))
     assert resp.status_code == 200
@@ -59,8 +59,8 @@ def test_descarga_html(integration_context):
     assert "Comprobante" in resp.text
 
 
-def test_sin_pago_confirmado_no_hay_comprobante(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_sin_pago_confirmado_no_hay_comprobante(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, product, variant, warehouse = seed_store(db, "fac01d")
     buyer = seed_buyer(db, "fac01d")
     account = seed_payout_account(db, store)
@@ -69,8 +69,8 @@ def test_sin_pago_confirmado_no_hay_comprobante(integration_context):
     assert resp.status_code == 404
 
 
-def test_comprobante_refleja_cancelacion(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_comprobante_refleja_cancelacion(real_db_context):
+    client, db, token_for, _mail = real_db_context
     seller, store, buyer, order = _confirmed_order(client, db, token_for, "fac01e")
     # el pedido ya está confirmado (paid); el vendedor lo pasa a cancelado vía status
     client.patch(f"/api/v1/seller/orders/{order.id}/status", json={"status": "cancelled"}, headers=token_for(seller.id))
@@ -78,8 +78,8 @@ def test_comprobante_refleja_cancelacion(integration_context):
     assert body["status"] == "cancelled"
 
 
-def test_comprobante_de_otro_comprador_da_404(integration_context):
-    client, db, token_for, _mail = integration_context
+def test_comprobante_de_otro_comprador_da_404(real_db_context):
+    client, db, token_for, _mail = real_db_context
     _seller, _store, _buyer, order = _confirmed_order(client, db, token_for, "fac01f")
     otro = seed_buyer(db, "fac01f-otro")
     resp = client.get(f"/api/v1/orders/{order.id}/invoice", headers=token_for(otro.id))
