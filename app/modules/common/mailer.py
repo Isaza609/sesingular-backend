@@ -101,6 +101,82 @@ def payment_rejected_to_buyer(to: str | None, order_id: str, note: str | None) -
     )
 
 
+ORDER_STATUS_LABELS = {
+    "pending": "pendiente",
+    "confirmed": "confirmado",
+    "preparing": "en preparación",
+    "shipped": "enviado",
+    "delivered": "entregado",
+    "cancelled": "cancelado",
+    "returned": "devuelto",
+}
+
+
+def order_status_changed_to_buyer(to: str | None, order_id: str, new_status: str) -> None:
+    """HU-PED-02: aviso al comprador del nuevo estado del pedido."""
+    label = ORDER_STATUS_LABELS.get(new_status, new_status)
+    send_email(
+        to,
+        f"Tu pedido {order_id} ahora está {label}",
+        _layout(
+            "Actualización de tu pedido",
+            f"<p>El estado de tu pedido <b>{order_id}</b> cambió a <b>{label}</b>.</p>"
+            "<p>Puedes ver el detalle y el seguimiento desde tu cuenta.</p>",
+        ),
+    )
+
+
+def order_status_changed_to_seller(to: str | None, order_id: str, new_status: str) -> None:
+    """HU-PED-02: aviso al vendedor del nuevo estado del pedido."""
+    label = ORDER_STATUS_LABELS.get(new_status, new_status)
+    send_email(
+        to,
+        f"Pedido {order_id}: {label}",
+        _layout(
+            "Actualización de pedido",
+            f"<p>El pedido <b>{order_id}</b> de tu tienda cambió a <b>{label}</b>.</p>",
+        ),
+    )
+
+
+SHIPMENT_STATUS_LABELS = {
+    "preparing": "en preparación",
+    "shipped": "despachado",
+    "in_transit": "en camino",
+    "delivered": "entregado",
+    "returned": "devuelto",
+}
+
+
+def shipment_status_to_buyer(to: str | None, order_id: str, new_status: str, note: str | None) -> None:
+    """HU-ENV-05: aviso al comprador del nuevo estado de envío con la nota del vendedor."""
+    label = SHIPMENT_STATUS_LABELS.get(new_status, new_status)
+    detail = f"<p><b>Nota del vendedor:</b> {note}</p>" if note else ""
+    send_email(
+        to,
+        f"Envío de tu pedido {order_id}: {label}",
+        _layout(
+            "Seguimiento de tu envío",
+            f"<p>El envío de tu pedido <b>{order_id}</b> ahora está <b>{label}</b>.</p>{detail}"
+            "<p>Consulta la línea de tiempo desde el detalle de tu pedido.</p>",
+        ),
+    )
+
+
+def order_cancelled_to_buyer(to: str | None, order_id: str, reason: str | None) -> None:
+    """HU-PED-04: aviso al comprador de la anulación del pedido con su motivo."""
+    detail = f"<p><b>Motivo:</b> {reason}</p>" if reason else ""
+    send_email(
+        to,
+        f"Tu pedido {order_id} fue cancelado",
+        _layout(
+            "Pedido cancelado",
+            f"<p>El vendedor anuló tu pedido <b>{order_id}</b>.</p>{detail}"
+            "<p>Si ya habías pagado, contacta al vendedor para resolver el caso.</p>",
+        ),
+    )
+
+
 def _money(value: int) -> str:
     return f"${value:,.0f} COP".replace(",", ".")
 

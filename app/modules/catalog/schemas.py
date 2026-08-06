@@ -188,6 +188,7 @@ class ProductIn(BaseModel):
     badge: str | None = Field(default=None, description="Etiqueta comercial visible en catalogo.", pattern="^(nuevo|destacado|oferta)$", example="nuevo")
     bestseller: bool = Field(default=False, description="Marca el producto como destacado por ventas.", example=False)
     status: str = Field(default="draft", description="Estado operativo del producto.", pattern="^(draft|active|out_of_stock|discontinued)$", example="active")
+    shipping_mode: str | None = Field(default=None, description="Override de modalidad de envio del producto sobre la tienda (HU-ENV-01): own_rates o to_agree; null hereda.", pattern="^(own_rates|to_agree)$", example="to_agree")
     category_ids: list[str] = Field(
         default_factory=list,
         description="Categorias o subcategorias activas de la misma tienda donde aparece el producto. No permite ids duplicados.",
@@ -224,6 +225,7 @@ class ProductPatch(BaseModel):
     badge: str | None = Field(default=None, description="Etiqueta comercial visible en catalogo.", pattern="^(nuevo|destacado|oferta)$", example="destacado")
     bestseller: bool | None = Field(default=None, description="Marca o desmarca el producto como destacado.", example=True)
     status: str | None = Field(default=None, description="Nuevo estado operativo del producto.", pattern="^(draft|active|out_of_stock|discontinued)$", example="active")
+    shipping_mode: str | None = Field(default=None, description="Override de modalidad de envio (HU-ENV-01): own_rates o to_agree.", pattern="^(own_rates|to_agree)$", example="to_agree")
     category_ids: list[str] | None = Field(
         default=None,
         description="Si se envia, reemplaza todas las categorias del producto por categorias activas de la misma tienda.",
@@ -265,6 +267,7 @@ class ProductOut(BaseModel):
     badge: str | None = Field(default=None, description="Etiqueta comercial.", example="nuevo")
     bestseller: bool = Field(default=False, description="Marca de destacado por ventas.", example=False)
     status: str = Field(description="Estado visible del producto.", example="active")
+    shipping_mode: str | None = Field(default=None, description="Override de modalidad de envio del producto (HU-ENV-01); null hereda de la tienda.", example="to_agree")
     categories: list[dict] = Field(description="Categorias activas asignadas.", example=[{"id": "cat-camisas", "slug": "camisas", "name": "Camisas"}])
     variants: list[VariantPublicOut] = Field(description="Variantes publicas sin costo interno.")
     images: list[ProductImageOut] = Field(description="Galeria general del producto.")
@@ -309,6 +312,9 @@ class StorePublicOut(BaseModel):
 
 class SellerStoreOut(StorePublicOut):
     active: bool = Field(description="Indica si la tienda esta activa; campo administrado.", example=True)
+    legal_name: str | None = Field(default=None, description="Razon social/nombre fiscal (HU-FAC-02); solo lectura, lo edita el admin.", example="Nova Ropa SAS")
+    tax_id: str | None = Field(default=None, description="Identificacion tributaria; solo lectura, lo edita el admin.", example="900123456-7")
+    fiscal_address: str | None = Field(default=None, description="Direccion fiscal; solo lectura, lo edita el admin.", example="Cra 7 # 20-30, Bogota")
 
 
 class SellerStorePatch(BaseModel):
@@ -365,9 +371,11 @@ class StoreSettingsIn(BaseModel):
     )
     shipping_flat_cost: int = Field(default=12900, description="Costo plano de envio de la tienda.", ge=0, example=12900)
     shipping_free_threshold: int = Field(default=120000, description="Subtotal desde el cual el envio es gratis.", ge=0, example=120000)
+    free_shipping_from: str | None = Field(default=None, description="Inicio de vigencia del envio gratis por umbral (ISO date, opcional; HU-ENV-04).", example="2026-12-01")
+    free_shipping_to: str | None = Field(default=None, description="Fin de vigencia del envio gratis por umbral (ISO date, opcional; HU-ENV-04).", example="2026-12-31")
     shipping_zones: list[dict] = Field(
         default_factory=list,
-        description="Zonas de envio configuradas por la tienda con city/region/cost/active/free_shipping opcionales.",
+        description="Zonas de envio con city/region/cost/active/free_shipping/free_shipping_min_subtotal/free_shipping_from/free_shipping_to opcionales.",
         example=[{"city": "Bogota", "region": "Cundinamarca", "cost": 12000, "active": True}],
     )
 

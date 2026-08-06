@@ -81,6 +81,9 @@ def _store_out(s: Store) -> dict:
         logo_url=s.logo_url,
         contact_email=s.contact_email,
         contact_phone=s.contact_phone,
+        legal_name=s.legal_name,
+        tax_id=s.tax_id,
+        fiscal_address=s.fiscal_address,
         active=s.active,
         created_at=s.created_at,
     )
@@ -319,10 +322,12 @@ def get_store(store_id: str, db: Session = Depends(get_db)):
 
 @router.patch("/stores/{store_id}", response_model=StoreOut)
 def patch_store(store_id: str, body: StorePatch, db: Session = Depends(get_db)):
+    """Rol permitido: admin. HU-FAC-02. Actualiza estado y/o datos fiscales de la tienda."""
     store = db.get(Store, store_id)
     if store is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tienda no encontrada")
-    store.active = body.active
+    for key, value in body.model_dump(exclude_unset=True).items():
+        setattr(store, key, value)
     db.commit()
     db.refresh(store)
     return StoreOut(**_store_out(store))

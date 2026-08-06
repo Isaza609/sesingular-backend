@@ -42,6 +42,6 @@ class User(Base):
 
     store_memberships = relationship("StoreMember", back_populates="user")
     addresses = relationship("Address", back_populates="user")
-    orders = relationship("Order", back_populates="buyer")
+    orders = relationship("Order", back_populates="buyer", foreign_keys="Order.buyer_id")
     cart = relationship("Cart", back_populates="user", uselist=False)
     favorites = relationship("Favorite", back_populates="user", cascade="all, delete-orphan")

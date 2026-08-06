@@ -74,6 +74,9 @@ class StoreOut(BaseModel):
     logo_url: str | None
     contact_email: str | None
     contact_phone: str | None
+    legal_name: str | None = Field(default=None, description="Razon social/nombre fiscal para el comprobante (HU-FAC-02).", example="Nova Ropa SAS")
+    tax_id: str | None = Field(default=None, description="Identificacion tributaria (NIT/RUT) de la tienda.", example="900123456-7")
+    fiscal_address: str | None = Field(default=None, description="Direccion fiscal de la tienda.", example="Cra 7 # 20-30, Bogota")
     active: bool
     created_at: datetime
 
@@ -89,7 +92,10 @@ class StoreDetailOut(StoreOut):
 
 
 class StorePatch(BaseModel):
-    active: bool
+    active: bool | None = Field(default=None, description="Activa o desactiva la tienda.", example=True)
+    legal_name: str | None = Field(default=None, description="Razon social/nombre fiscal (HU-FAC-02).", max_length=200, example="Nova Ropa SAS")
+    tax_id: str | None = Field(default=None, description="Identificacion tributaria.", max_length=40, example="900123456-7")
+    fiscal_address: str | None = Field(default=None, description="Direccion fiscal.", max_length=300, example="Cra 7 # 20-30, Bogota")
 
 
 class StoreCreate(BaseModel):
@@ -99,6 +105,9 @@ class StoreCreate(BaseModel):
     logo_url: str | None = None
     contact_email: str | None = None
     contact_phone: str | None = None
+    legal_name: str | None = Field(default=None, description="Razon social/nombre fiscal (HU-FAC-02).", max_length=200, example="Nova Ropa SAS")
+    tax_id: str | None = Field(default=None, description="Identificacion tributaria.", max_length=40, example="900123456-7")
+    fiscal_address: str | None = Field(default=None, description="Direccion fiscal.", max_length=300, example="Cra 7 # 20-30, Bogota")
     owner_user_id: str | None = None
 
 

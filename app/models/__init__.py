@@ -4,9 +4,10 @@ from app.models.user import User
 from app.models.store import Store, StoreMember, Warehouse
 from app.models.catalog import Category, Product, ProductCategory, ProductImage, ProductVariant
 from app.models.inventory import InventoryMovement, StockLevel
-from app.models.order import Address, CheckoutGroup, Order, OrderAdjustment, OrderItem
+from app.models.order import Address, CheckoutGroup, Order, OrderAdjustment, OrderAssignmentEvent, OrderItem
+from app.models.invoice import Invoice, InvoiceStatus
 from app.models.payment import Payment, PaymentEvent
-from app.models.shipping import Shipment
+from app.models.shipping import Shipment, ShipmentEvent
 from app.models.cart import Cart, CartItem
 from app.models.promotion import Coupon, ExtraCharge, Promotion
 from app.models.review import Dispute, Review, ReviewReport
@@ -30,10 +31,14 @@ __all__ = [
     "CheckoutGroup",
     "Order",
     "OrderAdjustment",
+    "OrderAssignmentEvent",
     "OrderItem",
+    "Invoice",
+    "InvoiceStatus",
     "Payment",
     "PaymentEvent",
     "Shipment",
+    "ShipmentEvent",
     "Cart",
     "CartItem",
     "Promotion",

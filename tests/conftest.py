@@ -238,3 +238,77 @@ def integration_context(monkeypatch):
         with engine.begin() as conn:
             conn.execute(text(f'DROP SCHEMA IF EXISTS "{SCHEMA}" CASCADE'))
         engine.dispose()
+
+
+@pytest.fixture()
+def real_db_context(monkeypatch):
+    """API real (TestClient) contra la BD real con aislamiento por transacción y rollback.
+
+    Autorizado por el usuario para correr sobre la BD de producción (aún sin información
+    relevante). GARANTÍA DE LIMPIEZA: se abre una transacción externa y la sesión se liga a
+    ella con SAVEPOINTs; los `commit()` de los endpoints solo liberan el savepoint, nunca la
+    transacción externa, y el teardown hace `rollback` → NADA queda persistido. No se ejecuta
+    ningún DDL destructivo (nada de DROP/TRUNCATE). Requiere que la migración de la épica ya
+    esté aplicada en la BD (las tablas deben existir).
+    """
+    settings = get_settings()
+    engine = create_engine(settings.database_url, pool_pre_ping=True)
+    try:
+        connection = engine.connect()  # pool_pre_ping valida la conexión; no ejecutar SELECT aquí (autobegin)
+    except OperationalError as exc:
+        engine.dispose()
+        pytest.skip(f"BD no disponible para pruebas de integración: {exc}")
+
+    transaction = connection.begin()
+    # SQLAlchemy 2.0: la sesión se une a la transacción externa creando SAVEPOINTs; los
+    # commit() de los endpoints solo liberan/reinician el savepoint, nunca la transacción
+    # externa. El rollback del teardown revierte TODO → cero persistencia.
+    TestingSessionLocal = sessionmaker(
+        bind=connection, autoflush=False, autocommit=False, join_transaction_mode="create_savepoint"
+    )
+    db = TestingSessionLocal()
+
+    fake_auth = FakeAuthService()
+    token_map: dict[str, str] = {}
+    mail_calls: list[dict] = []
+
+    def override_get_db():
+        try:
+            yield db
+        finally:
+            pass
+
+    def fake_verify_token(token: str) -> dict:
+        user_id = token_map[token]
+        return {"sub": user_id, "email": f"{user_id}@example.com"}
+
+    def token_for(user_id: str) -> dict[str, str]:
+        token = f"token-{user_id}"
+        token_map[token] = user_id
+        return {"Authorization": f"Bearer {token}"}
+
+    def fake_send_email(to, subject, html):
+        mail_calls.append({"to": to, "subject": subject})
+
+    from app.modules.auth import deps as auth_deps
+    from app.modules.common import mailer
+    from app.modules.orders import router as orders_router
+    from app.modules.seller import router as seller_router
+
+    monkeypatch.setattr(auth_deps, "verify_token", fake_verify_token)
+    monkeypatch.setattr(mailer, "send_email", fake_send_email)
+    monkeypatch.setattr(orders_router, "upload_receipt", lambda content, ct, sid, oid: f"{sid}/{oid}/r.pdf")
+    monkeypatch.setattr(orders_router, "signed_url", lambda p, expires_in=3600: None)
+    monkeypatch.setattr(seller_router, "signed_url", lambda p, expires_in=3600: None)
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_auth_service] = lambda: fake_auth
+    client = TestClient(app)
+    try:
+        yield client, db, token_for, mail_calls
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        transaction.rollback()  # revierte TODO lo creado por los tests: cero persistencia
+        connection.close()
+        engine.dispose()

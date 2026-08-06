@@ -93,6 +93,7 @@ Marketplace Singular — API Python
 - [GET `/api/v1/orders`](#get-apiv1orders) — Listar pedidos del comprador
 - [GET `/api/v1/orders/{order_id}`](#get-apiv1ordersorder-id) — Consultar pedido del comprador
 - [POST `/api/v1/orders/{order_id}/cancel`](#post-apiv1ordersorder-idcancel) — Cancelar pedido
+- [GET `/api/v1/orders/{order_id}/shipment`](#get-apiv1ordersorder-idshipment) — Consultar seguimiento del envio
 - [GET `/api/v1/orders/{order_id}/payment`](#get-apiv1ordersorder-idpayment) — Consultar estado del pago
 - [POST `/api/v1/orders/{order_id}/payment/receipt`](#post-apiv1ordersorder-idpaymentreceipt) — Subir comprobante de pago
 - [GET `/api/v1/seller/dashboard`](#get-apiv1sellerdashboard) — Seller Dashboard
@@ -101,6 +102,10 @@ Marketplace Singular — API Python
 - [GET `/api/v1/seller/orders`](#get-apiv1sellerorders) — Listar pedidos de mi tienda
 - [PATCH `/api/v1/seller/orders/{order_id}/status`](#patch-apiv1sellerordersorder-idstatus) — Actualizar estado de pedido
 - [PATCH `/api/v1/seller/orders/{order_id}/warehouse`](#patch-apiv1sellerordersorder-idwarehouse) — Asignar almacen de despacho
+- [POST `/api/v1/seller/orders/{order_id}/cancel`](#post-apiv1sellerordersorder-idcancel) — Anular pedido con motivo
+- [PATCH `/api/v1/seller/orders/{order_id}/assignee`](#patch-apiv1sellerordersorder-idassignee) — Asignar responsable del pedido
+- [PATCH `/api/v1/seller/orders/{order_id}/shipment`](#patch-apiv1sellerordersorder-idshipment) — Actualizar seguimiento del envio
+- [POST `/api/v1/seller/orders/{order_id}/return`](#post-apiv1sellerordersorder-idreturn) — Registrar devolucion
 - [POST `/api/v1/seller/pos/orders`](#post-apiv1sellerposorders) — Crear venta presencial
 - [GET `/api/v1/seller/promotions`](#get-apiv1sellerpromotions) — Listar promociones
 - [POST `/api/v1/seller/promotions`](#post-apiv1sellerpromotions) — Crear promocion
@@ -126,6 +131,11 @@ Marketplace Singular — API Python
 - [POST `/api/v1/seller/payments/{payment_id}/overpaid`](#post-apiv1sellerpaymentspayment-idoverpaid) — Registrar acuerdo por monto de mas
 - [POST `/api/v1/payments/orders/{order_id}/intent`](#post-apiv1paymentsordersorder-idintent) — Crear intento de pago por pasarela
 - [POST `/api/v1/payments/webhooks/{provider}`](#post-apiv1paymentswebhooksprovider) — Recibir notificacion de la pasarela
+- [GET `/api/v1/orders/{order_id}/invoice`](#get-apiv1ordersorder-idinvoice) — Consultar comprobante del pedido
+- [GET `/api/v1/orders/{order_id}/invoice/download`](#get-apiv1ordersorder-idinvoicedownload) — Descargar comprobante del pedido
+- [GET `/api/v1/seller/invoices`](#get-apiv1sellerinvoices) — Listar comprobantes de mi tienda
+- [GET `/api/v1/seller/invoices/{invoice_id}`](#get-apiv1sellerinvoicesinvoice-id) — Consultar comprobante de mi tienda
+- [GET `/api/v1/seller/invoices/{invoice_id}/download`](#get-apiv1sellerinvoicesinvoice-iddownload) — Descargar comprobante de mi tienda
 - [GET `/api/v1/catalog/products/{product_id}/reviews`](#get-apiv1catalogproductsproduct-idreviews) — Product Reviews
 - [POST `/api/v1/catalog/products/{product_id}/reviews`](#post-apiv1catalogproductsproduct-idreviews) — Create Review
 - [POST `/api/v1/reviews/{review_id}/report`](#post-apiv1reviewsreview-idreport) — Report Review
@@ -579,6 +589,8 @@ Successful Response
 ## `PATCH` `/api/v1/admin/stores/{store_id}`
 
 **Patch Store**
+
+Rol permitido: admin. HU-FAC-02. Actualiza estado y/o datos fiscales de la tienda.
 
 **Tags:** admin
 
@@ -1177,7 +1189,7 @@ Detalle publico del producto con variantes, imagenes, disponibilidad y datos de 
 
 **Consultar mi tienda**
 
-Rol permitido: seller. HU-TDA-01. Retorna la tienda asociada y separa datos publicos editables de campos administrados.
+Rol permitido: seller. HU-TDA-01 y HU-FAC-02. Retorna la tienda asociada, sus datos publicos editables y los datos fiscales (solo lectura, administrados por el admin).
 
 **Tags:** seller-catalog
 
@@ -1250,7 +1262,7 @@ Configuracion vigente de la tienda.
 
 **Actualizar configuracion de tienda**
 
-Rol permitido: seller. HU-TDA-03. Define pasarela automatizada, transferencia bancaria y Bre-B aceptados por la tienda.
+Rol permitido: seller. HU-TDA-03, HU-ENV-01, HU-ENV-02 y HU-ENV-04. Define metodos de pago y la configuracion de envio (modalidad, lugares y precios, envio gratis con vigencia). La modalidad por zonas exige al menos un lugar activo.
 
 **Tags:** seller-catalog
 
@@ -1268,6 +1280,7 @@ Configuracion actualizada de la tienda.
 | 403    | Requiere rol seller o cambio de contrasena pendiente. |                |
 | 404    | El vendedor no tiene una tienda activa.               |                |
 | 422    | Validacion Pydantic.                                  |                |
+| 400    | Modalidad por zonas sin ningun lugar activo.          |                |
 
 ---
 
@@ -2451,19 +2464,21 @@ Compra agrupada propia con pedidos por tienda.
 
 **Listar pedidos del comprador**
 
-Rol permitido: buyer. HU-CHK-05. Lista pedidos propios; para compras multi-tienda usar tambien /purchases para vista agrupada.
+Rol permitido: buyer. HU-PED-01 e HU-PED-03. Lista pedidos propios con su estado; filtra por estado y rango de fechas. Para compras multi-tienda usar tambien /purchases.
 
 **Tags:** buyer
 
 ### Parámetros de query
 
-| Nombre | Tipo   | Requerido | Descripción                    |
-| ------ | ------ | --------- | ------------------------------ |
-| status | string |           | Estado de pedido para filtrar. |
+| Nombre    | Tipo   | Requerido | Descripción                             |
+| --------- | ------ | --------- | --------------------------------------- |
+| status    | string |           | Estado de pedido para filtrar.          |
+| date_from | string |           | Fecha inicial inclusiva (por creacion). |
+| date_to   | string |           | Fecha final inclusiva (por creacion).   |
 
 ### Respuesta `200`
 
-Pedidos propios del comprador autenticado.
+Pedidos propios del comprador autenticado segun los filtros.
 
 ```json
 [
@@ -2537,6 +2552,35 @@ Pedido cancelado con inventario conciliado.
 | 404    | Pedido no encontrado.       |                |
 | 409    | Pedido ya no cancelable.    |                |
 | 422    | Validacion Pydantic.        |                |
+
+---
+
+## `GET` `/api/v1/orders/{order_id}/shipment`
+
+**Consultar seguimiento del envio**
+
+Rol permitido: buyer. HU-ENV-05. Devuelve el estado de envio de un pedido propio y su linea de tiempo de solo lectura (estados con fecha y hora). Sin actualizaciones muestra el estado inicial sin informacion falsa de tracking.
+
+**Tags:** buyer
+
+### Parámetros de ruta
+
+| Nombre   | Tipo   | Requerido | Descripción |
+| -------- | ------ | --------- | ----------- |
+| order_id | string | ✓         |             |
+
+### Respuesta `200`
+
+Estado de envio y linea de tiempo del pedido.
+
+### Errores posibles
+
+| Código | Situación                                            | Mensaje típico |
+| ------ | ---------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                          |                |
+| 403    | Requiere rol buyer.                                  |                |
+| 404    | Pedido no encontrado dentro del scope del comprador. |                |
+| 422    | Validacion Pydantic.                                 |                |
 
 ---
 
@@ -2690,20 +2734,23 @@ Usuarios asociados a la tienda del vendedor.
 
 **Listar pedidos de mi tienda**
 
-Rol permitido: seller. HU-CHK-05. Lista solo pedidos asignados a la tienda del seller o su equipo, aunque la compra del comprador tenga varias tiendas.
+Rol permitido: seller. HU-PED-01, HU-PED-03 e HU-PED-05. Lista solo pedidos de la tienda del seller o su equipo, con filtros por estado, canal, rango de fechas y responsable (`assignee=<id>` o `assignee=unassigned`).
 
 **Tags:** seller
 
 ### Parámetros de query
 
-| Nombre  | Tipo   | Requerido | Descripción |
-| ------- | ------ | --------- | ----------- |
-| status  | string |           |             |
-| channel | string |           |             |
+| Nombre    | Tipo   | Requerido | Descripción                                                     |
+| --------- | ------ | --------- | --------------------------------------------------------------- |
+| status    | string |           | Estado del pedido a filtrar.                                    |
+| channel   | string |           | Canal de origen.                                                |
+| date_from | string |           | Fecha inicial inclusiva (por creacion).                         |
+| date_to   | string |           | Fecha final inclusiva (por creacion).                           |
+| assignee  | string |           | Responsable: id de usuario o 'unassigned' para los sin asignar. |
 
 ### Respuesta `200`
 
-Pedidos de la tienda autenticada.
+Pedidos de la tienda autenticada segun los filtros.
 
 ```json
 [
@@ -2725,7 +2772,7 @@ Pedidos de la tienda autenticada.
 
 **Actualizar estado de pedido**
 
-Rol permitido: seller. HU-INV-04. Actualiza el estado de un pedido propio y repone o libera inventario cuando se cancela o devuelve.
+Rol permitido: seller. HU-PED-01, HU-PED-02 e HU-INV-04. Actualiza el estado de un pedido propio (independiente del estado de pago), repone o libera inventario cuando se cancela o devuelve, y notifica el nuevo estado al comprador (y al vendedor cuando se despacha).
 
 **Tags:** seller
 
@@ -2739,7 +2786,7 @@ Rol permitido: seller. HU-INV-04. Actualiza el estado de un pedido propio y repo
 
 ### Respuesta `200`
 
-Pedido actualizado con inventario conciliado segun el estado.
+Pedido actualizado con inventario conciliado y notificacion agendada.
 
 ### Errores posibles
 
@@ -2784,6 +2831,136 @@ Pedido con almacen asignado y movimientos de salida registrados.
 | 404    | Pedido o almacen no encontrado.                                 |                |
 | 409    | Transicion invalida, stock insuficiente o pedido ya descontado. |                |
 | 422    | Validacion Pydantic.                                            |                |
+
+---
+
+## `POST` `/api/v1/seller/orders/{order_id}/cancel`
+
+**Anular pedido con motivo**
+
+Rol permitido: seller. HU-PED-04. Anula un pedido propio indicando el motivo: libera el stock reservado, deja el pedido `cancelled` con su motivo y notifica al comprador. Un pedido ya despachado o entregado no se anula (debe tratarse como devolucion, HU-ENV-06).
+
+**Tags:** seller
+
+### Parámetros de ruta
+
+| Nombre   | Tipo   | Requerido | Descripción |
+| -------- | ------ | --------- | ----------- |
+| order_id | string | ✓         |             |
+
+### Request body
+
+### Respuesta `200`
+
+Pedido anulado con stock liberado y notificacion agendada.
+
+### Errores posibles
+
+| Código | Situación                                                                | Mensaje típico |
+| ------ | ------------------------------------------------------------------------ | -------------- |
+| 400    | Datos invalidos o almacen inactivo.                                      |                |
+| 401    | Token requerido o invalido.                                              |                |
+| 403    | Requiere rol seller o pedido fuera de la tienda.                         |                |
+| 404    | Pedido o almacen no encontrado.                                          |                |
+| 409    | El pedido ya esta despachado/entregado/devuelto: tratar como devolucion. |                |
+| 422    | Validacion Pydantic.                                                     |                |
+
+---
+
+## `PATCH` `/api/v1/seller/orders/{order_id}/assignee`
+
+**Asignar responsable del pedido**
+
+Rol permitido: seller. HU-PED-05. Asigna, reasigna o desasigna (assignee_id=null) el responsable de un pedido entre usuarios de la misma tienda, y registra el historial con el usuario anterior. La asignacion es organizativa: no restringe el acceso de otros miembros.
+
+**Tags:** seller
+
+### Parámetros de ruta
+
+| Nombre   | Tipo   | Requerido | Descripción |
+| -------- | ------ | --------- | ----------- |
+| order_id | string | ✓         |             |
+
+### Request body
+
+### Respuesta `200`
+
+Pedido con el responsable actualizado.
+
+### Errores posibles
+
+| Código | Situación                                                         | Mensaje típico |
+| ------ | ----------------------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                                       |                |
+| 403    | Requiere rol seller o cambio obligatorio de contrasena pendiente. |                |
+| 404    | Recurso no encontrado.                                            |                |
+| 422    | Validacion Pydantic.                                              |                |
+| 400    | El usuario asignado no pertenece a la tienda.                     |                |
+
+---
+
+## `PATCH` `/api/v1/seller/orders/{order_id}/shipment`
+
+**Actualizar seguimiento del envio**
+
+Rol permitido: seller. HU-ENV-05. Actualiza manualmente el estado del envio de un pedido propio (preparing/shipped/in_transit/delivered/returned) y agrega una nota o referencia libre a la linea de tiempo; el comprador la consulta y recibe notificacion.
+
+**Tags:** seller
+
+### Parámetros de ruta
+
+| Nombre   | Tipo   | Requerido | Descripción |
+| -------- | ------ | --------- | ----------- |
+| order_id | string | ✓         |             |
+
+### Request body
+
+### Respuesta `200`
+
+Envio actualizado con su linea de tiempo.
+
+### Errores posibles
+
+| Código | Situación                                                         | Mensaje típico |
+| ------ | ----------------------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                                       |                |
+| 403    | Requiere rol seller o cambio obligatorio de contrasena pendiente. |                |
+| 404    | Recurso no encontrado.                                            |                |
+| 422    | Validacion Pydantic.                                              |                |
+| 400    | Estado de envio no soportado.                                     |                |
+
+---
+
+## `POST` `/api/v1/seller/orders/{order_id}/return`
+
+**Registrar devolucion**
+
+Rol permitido: seller. HU-ENV-06. Gestiona la devolucion de un pedido despachado o entregado: con `restock=true` reintegra el stock al inventario; con `false` (p. ej. producto dañado) no reintegra y registra el motivo. El pedido queda `returned` y el comprador ve el estado y el resultado.
+
+**Tags:** seller
+
+### Parámetros de ruta
+
+| Nombre   | Tipo   | Requerido | Descripción |
+| -------- | ------ | --------- | ----------- |
+| order_id | string | ✓         |             |
+
+### Request body
+
+### Respuesta `200`
+
+Pedido devuelto con inventario conciliado segun corresponda.
+
+### Errores posibles
+
+| Código | Situación                                        | Mensaje típico |
+| ------ | ------------------------------------------------ | -------------- |
+| 400    | Datos invalidos o almacen inactivo.              |                |
+| 401    | Token requerido o invalido.                      |                |
+| 403    | Requiere rol seller o pedido fuera de la tienda. |                |
+| 404    | Pedido o almacen no encontrado.                  |                |
+| 409    | El pedido no esta despachado ni entregado.       |                |
+| 422    | Validacion Pydantic.                             |                |
 
 ---
 
@@ -3551,6 +3728,166 @@ Pago afectado con su nuevo estado.
 | 401    | Firma de webhook invalida.                               |                |
 | 404    | Pago no encontrado.                                      |                |
 | 422    | Validacion Pydantic.                                     |                |
+
+---
+
+## `GET` `/api/v1/orders/{order_id}/invoice`
+
+**Consultar comprobante del pedido**
+
+Rol permitido: buyer. HU-FAC-01. Devuelve el comprobante de venta emitido para un pedido propio (tras confirmarse el pago), con cargos desglosados y datos fiscales de la tienda.
+
+**Tags:** invoices
+
+### Parámetros de ruta
+
+| Nombre   | Tipo   | Requerido | Descripción |
+| -------- | ------ | --------- | ----------- |
+| order_id | string | ✓         |             |
+
+### Respuesta `200`
+
+Comprobante de venta del pedido.
+
+### Errores posibles
+
+| Código | Situación                                                          | Mensaje típico |
+| ------ | ------------------------------------------------------------------ | -------------- |
+| 401    | Token requerido o invalido.                                        |                |
+| 403    | Requiere rol buyer.                                                |                |
+| 404    | Pedido o comprobante no encontrado dentro del scope del comprador. |                |
+| 422    | Validacion Pydantic.                                               |                |
+
+---
+
+## `GET` `/api/v1/orders/{order_id}/invoice/download`
+
+**Descargar comprobante del pedido**
+
+Rol permitido: buyer. HU-FAC-01. Devuelve el comprobante como documento HTML autocontenido, imprimible a PDF.
+
+**Tags:** invoices
+
+### Parámetros de ruta
+
+| Nombre   | Tipo   | Requerido | Descripción |
+| -------- | ------ | --------- | ----------- |
+| order_id | string | ✓         |             |
+
+### Respuesta `200`
+
+Documento HTML del comprobante.
+
+```json
+"string"
+```
+
+### Errores posibles
+
+| Código | Situación                                                          | Mensaje típico |
+| ------ | ------------------------------------------------------------------ | -------------- |
+| 401    | Token requerido o invalido.                                        |                |
+| 403    | Requiere rol buyer.                                                |                |
+| 404    | Pedido o comprobante no encontrado dentro del scope del comprador. |                |
+| 422    | Validacion Pydantic.                                               |                |
+
+---
+
+## `GET` `/api/v1/seller/invoices`
+
+**Listar comprobantes de mi tienda**
+
+Rol permitido: seller. HU-FAC-03. Lista los comprobantes emitidos por la tienda del vendedor con fecha, comprador, pedido y monto; filtra por rango de fechas y estado del pedido.
+
+**Tags:** seller-invoices
+
+### Parámetros de query
+
+| Nombre    | Tipo   | Requerido | Descripción                            |
+| --------- | ------ | --------- | -------------------------------------- |
+| date_from | string |           | Fecha inicial inclusiva (por emision). |
+| date_to   | string |           | Fecha final inclusiva (por emision).   |
+| status    | string |           | Estado del comprobante.                |
+
+### Respuesta `200`
+
+Comprobantes emitidos por la tienda.
+
+```json
+[
+  {}
+]
+```
+
+### Errores posibles
+
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol seller.        |                |
+| 422    | Validacion Pydantic.        |                |
+
+---
+
+## `GET` `/api/v1/seller/invoices/{invoice_id}`
+
+**Consultar comprobante de mi tienda**
+
+Rol permitido: seller. HU-FAC-03. Detalle de un comprobante emitido por la tienda del vendedor.
+
+**Tags:** seller-invoices
+
+### Parámetros de ruta
+
+| Nombre     | Tipo   | Requerido | Descripción |
+| ---------- | ------ | --------- | ----------- |
+| invoice_id | string | ✓         |             |
+
+### Respuesta `200`
+
+Comprobante de la tienda.
+
+### Errores posibles
+
+| Código | Situación                                            | Mensaje típico |
+| ------ | ---------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                          |                |
+| 403    | Requiere rol seller.                                 |                |
+| 404    | Comprobante no encontrado en la tienda del vendedor. |                |
+| 422    | Validacion Pydantic.                                 |                |
+
+---
+
+## `GET` `/api/v1/seller/invoices/{invoice_id}/download`
+
+**Descargar comprobante de mi tienda**
+
+Rol permitido: seller. HU-FAC-03. Devuelve el comprobante de la tienda como HTML autocontenido, igual que lo recibe el comprador.
+
+**Tags:** seller-invoices
+
+### Parámetros de ruta
+
+| Nombre     | Tipo   | Requerido | Descripción |
+| ---------- | ------ | --------- | ----------- |
+| invoice_id | string | ✓         |             |
+
+### Respuesta `200`
+
+Documento HTML del comprobante.
+
+```json
+"string"
+```
+
+### Errores posibles
+
+| Código | Situación                                            | Mensaje típico |
+| ------ | ---------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                          |                |
+| 403    | Requiere rol seller.                                 |                |
+| 404    | Comprobante no encontrado en la tienda del vendedor. |                |
+| 422    | Validacion Pydantic.                                 |                |
 
 ---
 

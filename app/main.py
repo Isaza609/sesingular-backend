@@ -11,6 +11,8 @@ from app.modules.inventory.router import public_router as inventory_public_route
 from app.modules.inventory.router import seller_router as inventory_seller_router
 from app.modules.orders.router import buyer_router as buyer_router
 from app.modules.orders.router import seller_router as order_seller_router
+from app.modules.invoices.router import buyer_router as invoices_buyer_router
+from app.modules.invoices.router import seller_router as invoices_seller_router
 from app.modules.payments.router import router as payments_router
 from app.modules.reviews.router import router as reviews_router
 from app.modules.seller.router import router as seller_router
@@ -43,4 +45,6 @@ app.include_router(buyer_router, prefix=prefix)
 app.include_router(order_seller_router, prefix=prefix)
 app.include_router(seller_router, prefix=prefix)
 app.include_router(payments_router, prefix=prefix)
+app.include_router(invoices_buyer_router, prefix=prefix)
+app.include_router(invoices_seller_router, prefix=prefix)
 app.include_router(reviews_router, prefix=prefix)

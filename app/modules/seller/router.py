@@ -9,17 +9,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Coupon, ExtraCharge, Order, OrderItem, Payment, PayoutAccount, PlatformSetting, Product, ProductVariant, Promotion, StockLevel, Store, StoreMember, User, Warehouse
+from app.models import Coupon, ExtraCharge, Order, OrderAssignmentEvent, OrderItem, Payment, PayoutAccount, PlatformSetting, Product, ProductVariant, Promotion, Shipment, ShipmentEvent, StockLevel, Store, StoreMember, User, Warehouse
 from app.models.order import OrderStatus, SaleChannel
 from app.models.payment import PaymentStatus
 from app.models.payout import PayoutAccountType
+from app.models.shipping import ShipmentStatus, tracking_to_shipment_status
 from app.models.promotion import ChargeType, DiscountType, PromotionScope
 from app.modules.common import mailer
 from app.modules.common.permissions import get_seller_store, require_seller
 from app.modules.common.storage import signed_url
 from app.modules.inventory.service import consume_reserved_order_from_warehouse, consume_variant, fulfill_reserved_order, restock_order
-from app.modules.orders.router import _order_out, _payout_account_out
-from app.modules.orders.schemas import OrderOut, OrderStatusPatch, PosOrderIn, WarehouseAssign
+from app.modules.orders.router import _order_out, _payout_account_out, shipment_out_for_order
+from app.modules.orders.schemas import OrderAssigneeIn, OrderCancelIn, OrderOut, OrderReturnIn, OrderStatusPatch, PosOrderIn, ShipmentOut, ShipmentUpdateIn, WarehouseAssign
 from app.modules.payments import service as payment_service
 from app.modules.seller.schemas import (
     CouponIn,
@@ -168,13 +169,20 @@ def seller_store_members(store: Store = Depends(get_seller_store), db: Session =
     response_model=list[OrderOut],
     status_code=status.HTTP_200_OK,
     summary="Listar pedidos de mi tienda",
-    description="Rol permitido: seller. HU-CHK-05. Lista solo pedidos asignados a la tienda del seller o su equipo, aunque la compra del comprador tenga varias tiendas.",
-    response_description="Pedidos de la tienda autenticada.",
+    description=(
+        "Rol permitido: seller. HU-PED-01, HU-PED-03 e HU-PED-05. Lista solo pedidos de la tienda del "
+        "seller o su equipo, con filtros por estado, canal, rango de fechas y responsable "
+        "(`assignee=<id>` o `assignee=unassigned`)."
+    ),
+    response_description="Pedidos de la tienda autenticada segun los filtros.",
     responses={401: {"description": "Token requerido o invalido."}, 403: {"description": "Requiere rol seller o tienda no permitida."}, 422: {"description": "Validacion Pydantic."}},
 )
 def seller_orders(
-    status_filter: str | None = Query(None, alias="status"),
-    channel: str | None = Query(None, pattern="^(online|presencial)$"),
+    status_filter: str | None = Query(None, alias="status", description="Estado del pedido a filtrar."),
+    channel: str | None = Query(None, pattern="^(online|presencial)$", description="Canal de origen."),
+    date_from: date | None = Query(None, description="Fecha inicial inclusiva (por creacion)."),
+    date_to: date | None = Query(None, description="Fecha final inclusiva (por creacion)."),
+    assignee: str | None = Query(None, description="Responsable: id de usuario o 'unassigned' para los sin asignar."),
     store: Store = Depends(get_seller_store),
     db: Session = Depends(get_db),
 ):
@@ -183,6 +191,14 @@ def seller_orders(
         stmt = stmt.where(Order.status == status_filter)
     if channel:
         stmt = stmt.where(Order.channel == channel)
+    if date_from:
+        stmt = stmt.where(Order.created_at >= datetime.combine(date_from, datetime.min.time(), timezone.utc))
+    if date_to:
+        stmt = stmt.where(Order.created_at <= datetime.combine(date_to, datetime.max.time(), timezone.utc))
+    if assignee == "unassigned":
+        stmt = stmt.where(Order.assignee_id.is_(None))
+    elif assignee:
+        stmt = stmt.where(Order.assignee_id == assignee)
     return [OrderOut.model_validate(_order_out(order)) for order in db.scalars(stmt).all()]
 
 
@@ -217,11 +233,15 @@ POS_ORDER_RESPONSES = {
     response_model=OrderOut,
     status_code=status.HTTP_200_OK,
     summary="Actualizar estado de pedido",
-    description="Rol permitido: seller. HU-INV-04. Actualiza el estado de un pedido propio y repone o libera inventario cuando se cancela o devuelve.",
-    response_description="Pedido actualizado con inventario conciliado segun el estado.",
+    description=(
+        "Rol permitido: seller. HU-PED-01, HU-PED-02 e HU-INV-04. Actualiza el estado de un pedido "
+        "propio (independiente del estado de pago), repone o libera inventario cuando se cancela o "
+        "devuelve, y notifica el nuevo estado al comprador (y al vendedor cuando se despacha)."
+    ),
+    response_description="Pedido actualizado con inventario conciliado y notificacion agendada.",
     responses=ORDER_INVENTORY_RESPONSES,
 )
-def patch_order_status(order_id: str, body: OrderStatusPatch, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+def patch_order_status(order_id: str, body: OrderStatusPatch, background: BackgroundTasks, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     order = _seller_order(order_id, store, db)
     target = OrderStatus(body.status)
     _assert_transition(order.status, target)
@@ -231,10 +251,29 @@ def patch_order_status(order_id: str, body: OrderStatusPatch, store: Store = Dep
         fulfill_reserved_order(db, order)
     if target == OrderStatus.returned and order.status != OrderStatus.returned:
         restock_order(db, order, note="Reposicion por devolucion aprobada")
+    changed = target != order.status
     order.status = target
+    if target in (OrderStatus.cancelled, OrderStatus.returned):
+        from app.modules.invoices.service import sync_invoice_status
+
+        sync_invoice_status(db, order)
     db.commit()
     db.refresh(order)
+    if changed:
+        _notify_order_status(background, order, store, target)
     return OrderOut.model_validate(_order_out(order))
+
+
+def _notify_order_status(background: BackgroundTasks, order: Order, store: Store, target: OrderStatus) -> None:
+    """HU-PED-02: notifica al comprador el nuevo estado; al vendedor cuando se despacha."""
+    background.add_task(
+        mailer.order_status_changed_to_buyer,
+        order.buyer.email if order.buyer else None,
+        order.id,
+        target.value,
+    )
+    if target == OrderStatus.shipped and store.contact_email:
+        background.add_task(mailer.order_status_changed_to_seller, store.contact_email, order.id, target.value)
 
 
 @router.patch(
@@ -250,6 +289,152 @@ def assign_order_warehouse(order_id: str, body: WarehouseAssign, store: Store = 
     order = _seller_order(order_id, store, db)
     consume_reserved_order_from_warehouse(db, order, body.warehouse_id)
     order.warehouse_id = body.warehouse_id
+    db.commit()
+    db.refresh(order)
+    return OrderOut.model_validate(_order_out(order))
+
+
+@router.post(
+    "/orders/{order_id}/cancel",
+    response_model=OrderOut,
+    status_code=status.HTTP_200_OK,
+    summary="Anular pedido con motivo",
+    description=(
+        "Rol permitido: seller. HU-PED-04. Anula un pedido propio indicando el motivo: libera el "
+        "stock reservado, deja el pedido `cancelled` con su motivo y notifica al comprador. Un pedido "
+        "ya despachado o entregado no se anula (debe tratarse como devolucion, HU-ENV-06)."
+    ),
+    response_description="Pedido anulado con stock liberado y notificacion agendada.",
+    responses={
+        **ORDER_INVENTORY_RESPONSES,
+        409: {"description": "El pedido ya esta despachado/entregado/devuelto: tratar como devolucion."},
+    },
+)
+def cancel_seller_order(order_id: str, body: OrderCancelIn, background: BackgroundTasks, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    order = _seller_order(order_id, store, db)
+    if order.status in (OrderStatus.shipped, OrderStatus.delivered, OrderStatus.returned):
+        raise HTTPException(status.HTTP_409_CONFLICT, "El pedido ya fue despachado o entregado: debe tratarse como devolucion")
+    if order.status == OrderStatus.cancelled:
+        raise HTTPException(status.HTTP_409_CONFLICT, "El pedido ya esta cancelado")
+    restock_order(db, order, note=f"Anulacion por vendedor: {body.reason}")
+    order.status = OrderStatus.cancelled
+    order.cancel_reason = body.reason
+    from app.modules.invoices.service import sync_invoice_status
+
+    sync_invoice_status(db, order)
+    db.commit()
+    db.refresh(order)
+    background.add_task(mailer.order_cancelled_to_buyer, order.buyer.email if order.buyer else None, order.id, body.reason)
+    return OrderOut.model_validate(_order_out(order))
+
+
+@router.patch(
+    "/orders/{order_id}/assignee",
+    response_model=OrderOut,
+    status_code=status.HTTP_200_OK,
+    summary="Asignar responsable del pedido",
+    description=(
+        "Rol permitido: seller. HU-PED-05. Asigna, reasigna o desasigna (assignee_id=null) el "
+        "responsable de un pedido entre usuarios de la misma tienda, y registra el historial con el "
+        "usuario anterior. La asignacion es organizativa: no restringe el acceso de otros miembros."
+    ),
+    response_description="Pedido con el responsable actualizado.",
+    responses={
+        **COMMON_RESPONSES,
+        400: {"description": "El usuario asignado no pertenece a la tienda."},
+    },
+)
+def assign_order_responsible(order_id: str, body: OrderAssigneeIn, store: Store = Depends(get_seller_store), user: User = Depends(require_seller), db: Session = Depends(get_db)):
+    order = _seller_order(order_id, store, db)
+    new_assignee = body.assignee_id
+    if new_assignee is not None:
+        member = db.scalar(
+            select(StoreMember).where(StoreMember.store_id == store.id, StoreMember.user_id == new_assignee)
+        )
+        if member is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "El usuario no pertenece a esta tienda")
+    previous = order.assignee_id
+    if previous != new_assignee:
+        db.add(OrderAssignmentEvent(order_id=order.id, from_user_id=previous, to_user_id=new_assignee, actor_user_id=user.id))
+    order.assignee_id = new_assignee
+    order.assigned_at = datetime.now(timezone.utc) if new_assignee else None
+    db.commit()
+    db.refresh(order)
+    return OrderOut.model_validate(_order_out(order))
+
+
+@router.patch(
+    "/orders/{order_id}/shipment",
+    response_model=ShipmentOut,
+    status_code=status.HTTP_200_OK,
+    summary="Actualizar seguimiento del envio",
+    description=(
+        "Rol permitido: seller. HU-ENV-05. Actualiza manualmente el estado del envio de un pedido "
+        "propio (preparing/shipped/in_transit/delivered/returned) y agrega una nota o referencia "
+        "libre a la linea de tiempo; el comprador la consulta y recibe notificacion."
+    ),
+    response_description="Envio actualizado con su linea de tiempo.",
+    responses={**COMMON_RESPONSES, 400: {"description": "Estado de envio no soportado."}},
+)
+def update_order_shipment(order_id: str, body: ShipmentUpdateIn, background: BackgroundTasks, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    order = _seller_order(order_id, store, db)
+    shipment = db.scalar(select(Shipment).where(Shipment.order_id == order.id).order_by(Shipment.created_at.desc()))
+    if shipment is None:
+        shipment = Shipment(order_id=order.id, cost=order.shipping_cost, status=ShipmentStatus.pending)
+        db.add(shipment)
+        db.flush()
+    shipment.tracking_status = body.status
+    shipment.status = tracking_to_shipment_status(body.status)
+    if body.note is not None:
+        shipment.note = body.note
+    if body.carrier is not None:
+        shipment.carrier = body.carrier
+    if body.tracking_number is not None:
+        shipment.tracking_number = body.tracking_number
+    if body.status == "shipped" and shipment.shipped_at is None:
+        shipment.shipped_at = datetime.now(timezone.utc)
+    if body.status == "delivered" and shipment.delivered_at is None:
+        shipment.delivered_at = datetime.now(timezone.utc)
+    db.add(ShipmentEvent(shipment_id=shipment.id, status=body.status, note=body.note))
+    db.commit()
+    db.refresh(order)
+    background.add_task(mailer.shipment_status_to_buyer, order.buyer.email if order.buyer else None, order.id, body.status, body.note)
+    return shipment_out_for_order(order)
+
+
+@router.post(
+    "/orders/{order_id}/return",
+    response_model=OrderOut,
+    status_code=status.HTTP_200_OK,
+    summary="Registrar devolucion",
+    description=(
+        "Rol permitido: seller. HU-ENV-06. Gestiona la devolucion de un pedido despachado o "
+        "entregado: con `restock=true` reintegra el stock al inventario; con `false` (p. ej. "
+        "producto dañado) no reintegra y registra el motivo. El pedido queda `returned` y el "
+        "comprador ve el estado y el resultado."
+    ),
+    response_description="Pedido devuelto con inventario conciliado segun corresponda.",
+    responses={
+        **ORDER_INVENTORY_RESPONSES,
+        409: {"description": "El pedido no esta despachado ni entregado."},
+    },
+)
+def register_order_return(order_id: str, body: OrderReturnIn, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+    order = _seller_order(order_id, store, db)
+    if order.status not in (OrderStatus.shipped, OrderStatus.delivered):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Solo se puede devolver un pedido despachado o entregado")
+    if body.restock:
+        restock_order(db, order, note=f"Reingreso por devolucion: {body.reason}")
+    order.status = OrderStatus.returned
+    order.cancel_reason = body.reason
+    shipment = db.scalar(select(Shipment).where(Shipment.order_id == order.id).order_by(Shipment.created_at.desc()))
+    if shipment is not None:
+        shipment.tracking_status = "returned"
+        shipment.status = ShipmentStatus.returned
+        db.add(ShipmentEvent(shipment_id=shipment.id, status="returned", note=body.reason))
+    from app.modules.invoices.service import sync_invoice_status
+
+    sync_invoice_status(db, order)
     db.commit()
     db.refresh(order)
     return OrderOut.model_validate(_order_out(order))

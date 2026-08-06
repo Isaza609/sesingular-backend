@@ -950,6 +950,7 @@
           "admin"
         ],
         "summary": "Patch Store",
+        "description": "Rol permitido: admin. HU-FAC-02. Actualiza estado y/o datos fiscales de la tienda.",
         "operationId": "patch_store_api_v1_admin_stores__store_id__patch",
         "security": [
           {
@@ -2354,7 +2355,7 @@
           "seller-catalog"
         ],
         "summary": "Consultar mi tienda",
-        "description": "Rol permitido: seller. HU-TDA-01. Retorna la tienda asociada y separa datos publicos editables de campos administrados.",
+        "description": "Rol permitido: seller. HU-TDA-01 y HU-FAC-02. Retorna la tienda asociada, sus datos publicos editables y los datos fiscales (solo lectura, administrados por el admin).",
         "operationId": "seller_store_api_v1_seller_store_get",
         "responses": {
           "200": {
@@ -2483,7 +2484,7 @@
           "seller-catalog"
         ],
         "summary": "Actualizar configuracion de tienda",
-        "description": "Rol permitido: seller. HU-TDA-03. Define pasarela automatizada, transferencia bancaria y Bre-B aceptados por la tienda.",
+        "description": "Rol permitido: seller. HU-TDA-03, HU-ENV-01, HU-ENV-02 y HU-ENV-04. Define metodos de pago y la configuracion de envio (modalidad, lugares y precios, envio gratis con vigencia). La modalidad por zonas exige al menos un lugar activo.",
         "operationId": "update_seller_store_settings_api_v1_seller_store_settings_put",
         "requestBody": {
           "content": {
@@ -2517,6 +2518,9 @@
           },
           "422": {
             "description": "Validacion Pydantic."
+          },
+          "400": {
+            "description": "Modalidad por zonas sin ningun lugar activo."
           }
         },
         "security": [
@@ -4809,7 +4813,7 @@
           "buyer"
         ],
         "summary": "Listar pedidos del comprador",
-        "description": "Rol permitido: buyer. HU-CHK-05. Lista pedidos propios; para compras multi-tienda usar tambien /purchases para vista agrupada.",
+        "description": "Rol permitido: buyer. HU-PED-01 e HU-PED-03. Lista pedidos propios con su estado; filtra por estado y rango de fechas. Para compras multi-tienda usar tambien /purchases.",
         "operationId": "buyer_orders_api_v1_orders_get",
         "security": [
           {
@@ -4835,11 +4839,49 @@
             },
             "description": "Estado de pedido para filtrar.",
             "example": "pending"
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fecha inicial inclusiva (por creacion).",
+              "title": "Date From"
+            },
+            "description": "Fecha inicial inclusiva (por creacion)."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fecha final inclusiva (por creacion).",
+              "title": "Date To"
+            },
+            "description": "Fecha final inclusiva (por creacion)."
           }
         ],
         "responses": {
           "200": {
-            "description": "Pedidos propios del comprador autenticado.",
+            "description": "Pedidos propios del comprador autenticado segun los filtros.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4960,6 +5002,56 @@
           },
           "409": {
             "description": "Pedido ya no cancelable."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{order_id}/shipment": {
+      "get": {
+        "tags": [
+          "buyer"
+        ],
+        "summary": "Consultar seguimiento del envio",
+        "description": "Rol permitido: buyer. HU-ENV-05. Devuelve el estado de envio de un pedido propio y su linea de tiempo de solo lectura (estados con fecha y hora). Sin actualizaciones muestra el estado inicial sin informacion falsa de tracking.",
+        "operationId": "buyer_order_shipment_api_v1_orders__order_id__shipment_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estado de envio y linea de tiempo del pedido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol buyer."
+          },
+          "404": {
+            "description": "Pedido no encontrado dentro del scope del comprador."
           },
           "422": {
             "description": "Validacion Pydantic."
@@ -5283,7 +5375,7 @@
           "seller"
         ],
         "summary": "Listar pedidos de mi tienda",
-        "description": "Rol permitido: seller. HU-CHK-05. Lista solo pedidos asignados a la tienda del seller o su equipo, aunque la compra del comprador tenga varias tiendas.",
+        "description": "Rol permitido: seller. HU-PED-01, HU-PED-03 e HU-PED-05. Lista solo pedidos de la tienda del seller o su equipo, con filtros por estado, canal, rango de fechas y responsable (`assignee=<id>` o `assignee=unassigned`).",
         "operationId": "seller_orders_api_v1_seller_orders_get",
         "security": [
           {
@@ -5304,8 +5396,10 @@
                   "type": "null"
                 }
               ],
+              "description": "Estado del pedido a filtrar.",
               "title": "Status"
-            }
+            },
+            "description": "Estado del pedido a filtrar."
           },
           {
             "name": "channel",
@@ -5321,13 +5415,71 @@
                   "type": "null"
                 }
               ],
+              "description": "Canal de origen.",
               "title": "Channel"
-            }
+            },
+            "description": "Canal de origen."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fecha inicial inclusiva (por creacion).",
+              "title": "Date From"
+            },
+            "description": "Fecha inicial inclusiva (por creacion)."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fecha final inclusiva (por creacion).",
+              "title": "Date To"
+            },
+            "description": "Fecha final inclusiva (por creacion)."
+          },
+          {
+            "name": "assignee",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Responsable: id de usuario o 'unassigned' para los sin asignar.",
+              "title": "Assignee"
+            },
+            "description": "Responsable: id de usuario o 'unassigned' para los sin asignar."
           }
         ],
         "responses": {
           "200": {
-            "description": "Pedidos de la tienda autenticada.",
+            "description": "Pedidos de la tienda autenticada segun los filtros.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5358,7 +5510,7 @@
           "seller"
         ],
         "summary": "Actualizar estado de pedido",
-        "description": "Rol permitido: seller. HU-INV-04. Actualiza el estado de un pedido propio y repone o libera inventario cuando se cancela o devuelve.",
+        "description": "Rol permitido: seller. HU-PED-01, HU-PED-02 e HU-INV-04. Actualiza el estado de un pedido propio (independiente del estado de pago), repone o libera inventario cuando se cancela o devuelve, y notifica el nuevo estado al comprador (y al vendedor cuando se despacha).",
         "operationId": "patch_order_status_api_v1_seller_orders__order_id__status_patch",
         "security": [
           {
@@ -5388,7 +5540,7 @@
         },
         "responses": {
           "200": {
-            "description": "Pedido actualizado con inventario conciliado segun el estado.",
+            "description": "Pedido actualizado con inventario conciliado y notificacion agendada.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5477,6 +5629,264 @@
           },
           "409": {
             "description": "Transicion invalida, stock insuficiente o pedido ya descontado."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          }
+        }
+      }
+    },
+    "/api/v1/seller/orders/{order_id}/cancel": {
+      "post": {
+        "tags": [
+          "seller"
+        ],
+        "summary": "Anular pedido con motivo",
+        "description": "Rol permitido: seller. HU-PED-04. Anula un pedido propio indicando el motivo: libera el stock reservado, deja el pedido `cancelled` con su motivo y notifica al comprador. Un pedido ya despachado o entregado no se anula (debe tratarse como devolucion, HU-ENV-06).",
+        "operationId": "cancel_seller_order_api_v1_seller_orders__order_id__cancel_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderCancelIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pedido anulado con stock liberado y notificacion agendada.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Datos invalidos o almacen inactivo."
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller o pedido fuera de la tienda."
+          },
+          "404": {
+            "description": "Pedido o almacen no encontrado."
+          },
+          "409": {
+            "description": "El pedido ya esta despachado/entregado/devuelto: tratar como devolucion."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          }
+        }
+      }
+    },
+    "/api/v1/seller/orders/{order_id}/assignee": {
+      "patch": {
+        "tags": [
+          "seller"
+        ],
+        "summary": "Asignar responsable del pedido",
+        "description": "Rol permitido: seller. HU-PED-05. Asigna, reasigna o desasigna (assignee_id=null) el responsable de un pedido entre usuarios de la misma tienda, y registra el historial con el usuario anterior. La asignacion es organizativa: no restringe el acceso de otros miembros.",
+        "operationId": "assign_order_responsible_api_v1_seller_orders__order_id__assignee_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderAssigneeIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pedido con el responsable actualizado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller o cambio obligatorio de contrasena pendiente."
+          },
+          "404": {
+            "description": "Recurso no encontrado."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          },
+          "400": {
+            "description": "El usuario asignado no pertenece a la tienda."
+          }
+        }
+      }
+    },
+    "/api/v1/seller/orders/{order_id}/shipment": {
+      "patch": {
+        "tags": [
+          "seller"
+        ],
+        "summary": "Actualizar seguimiento del envio",
+        "description": "Rol permitido: seller. HU-ENV-05. Actualiza manualmente el estado del envio de un pedido propio (preparing/shipped/in_transit/delivered/returned) y agrega una nota o referencia libre a la linea de tiempo; el comprador la consulta y recibe notificacion.",
+        "operationId": "update_order_shipment_api_v1_seller_orders__order_id__shipment_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShipmentUpdateIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Envio actualizado con su linea de tiempo.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller o cambio obligatorio de contrasena pendiente."
+          },
+          "404": {
+            "description": "Recurso no encontrado."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          },
+          "400": {
+            "description": "Estado de envio no soportado."
+          }
+        }
+      }
+    },
+    "/api/v1/seller/orders/{order_id}/return": {
+      "post": {
+        "tags": [
+          "seller"
+        ],
+        "summary": "Registrar devolucion",
+        "description": "Rol permitido: seller. HU-ENV-06. Gestiona la devolucion de un pedido despachado o entregado: con `restock=true` reintegra el stock al inventario; con `false` (p. ej. producto dañado) no reintegra y registra el motivo. El pedido queda `returned` y el comprador ve el estado y el resultado.",
+        "operationId": "register_order_return_api_v1_seller_orders__order_id__return_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderReturnIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pedido devuelto con inventario conciliado segun corresponda.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Datos invalidos o almacen inactivo."
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller o pedido fuera de la tienda."
+          },
+          "404": {
+            "description": "Pedido o almacen no encontrado."
+          },
+          "409": {
+            "description": "El pedido no esta despachado ni entregado."
           },
           "422": {
             "description": "Validacion Pydantic."
@@ -6924,6 +7334,305 @@
           },
           "404": {
             "description": "Pago no encontrado."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{order_id}/invoice": {
+      "get": {
+        "tags": [
+          "invoices"
+        ],
+        "summary": "Consultar comprobante del pedido",
+        "description": "Rol permitido: buyer. HU-FAC-01. Devuelve el comprobante de venta emitido para un pedido propio (tras confirmarse el pago), con cargos desglosados y datos fiscales de la tienda.",
+        "operationId": "buyer_order_invoice_api_v1_orders__order_id__invoice_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Comprobante de venta del pedido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol buyer."
+          },
+          "404": {
+            "description": "Pedido o comprobante no encontrado dentro del scope del comprador."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{order_id}/invoice/download": {
+      "get": {
+        "tags": [
+          "invoices"
+        ],
+        "summary": "Descargar comprobante del pedido",
+        "description": "Rol permitido: buyer. HU-FAC-01. Devuelve el comprobante como documento HTML autocontenido, imprimible a PDF.",
+        "operationId": "buyer_order_invoice_download_api_v1_orders__order_id__invoice_download_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Documento HTML del comprobante.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol buyer."
+          },
+          "404": {
+            "description": "Pedido o comprobante no encontrado dentro del scope del comprador."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          }
+        }
+      }
+    },
+    "/api/v1/seller/invoices": {
+      "get": {
+        "tags": [
+          "seller-invoices"
+        ],
+        "summary": "Listar comprobantes de mi tienda",
+        "description": "Rol permitido: seller. HU-FAC-03. Lista los comprobantes emitidos por la tienda del vendedor con fecha, comprador, pedido y monto; filtra por rango de fechas y estado del pedido.",
+        "operationId": "seller_invoices_api_v1_seller_invoices_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fecha inicial inclusiva (por emision).",
+              "title": "Date From"
+            },
+            "description": "Fecha inicial inclusiva (por emision)."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fecha final inclusiva (por emision).",
+              "title": "Date To"
+            },
+            "description": "Fecha final inclusiva (por emision)."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(issued|cancelled|returned)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Estado del comprobante.",
+              "title": "Status"
+            },
+            "description": "Estado del comprobante."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Comprobantes emitidos por la tienda.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InvoiceListItemOut"
+                  },
+                  "title": "Response Seller Invoices Api V1 Seller Invoices Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          }
+        }
+      }
+    },
+    "/api/v1/seller/invoices/{invoice_id}": {
+      "get": {
+        "tags": [
+          "seller-invoices"
+        ],
+        "summary": "Consultar comprobante de mi tienda",
+        "description": "Rol permitido: seller. HU-FAC-03. Detalle de un comprobante emitido por la tienda del vendedor.",
+        "operationId": "seller_invoice_api_v1_seller_invoices__invoice_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "invoice_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Invoice Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Comprobante de la tienda.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Comprobante no encontrado en la tienda del vendedor."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          }
+        }
+      }
+    },
+    "/api/v1/seller/invoices/{invoice_id}/download": {
+      "get": {
+        "tags": [
+          "seller-invoices"
+        ],
+        "summary": "Descargar comprobante de mi tienda",
+        "description": "Rol permitido: seller. HU-FAC-03. Devuelve el comprobante de la tienda como HTML autocontenido, igual que lo recibe el comprador.",
+        "operationId": "seller_invoice_download_api_v1_seller_invoices__invoice_id__download_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "invoice_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Invoice Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Documento HTML del comprobante.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Comprobante no encontrado en la tienda del vendedor."
           },
           "422": {
             "description": "Validacion Pydantic."
@@ -9894,6 +10603,412 @@
         ],
         "title": "InventoryReportOut"
       },
+      "InvoiceChargeOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "Tipo de linea: discount o extra_charge.",
+            "example": "extra_charge"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Nombre visible del cargo o descuento.",
+            "example": "Empaque para regalo"
+          },
+          "amount": {
+            "type": "integer",
+            "title": "Amount",
+            "description": "Monto de la linea.",
+            "example": 5000
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type",
+            "description": "Origen funcional de la linea.",
+            "example": "extra_charge"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code",
+            "description": "Codigo de cupon cuando aplica."
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "amount"
+        ],
+        "title": "InvoiceChargeOut"
+      },
+      "InvoiceItemOut": {
+        "properties": {
+          "product_name": {
+            "type": "string",
+            "title": "Product Name",
+            "description": "Nombre del producto facturado.",
+            "example": "Collar tejido"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku",
+            "description": "SKU de la variante.",
+            "example": "COLLAR-ROJO"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "Cantidad facturada.",
+            "example": 2
+          },
+          "unit_price": {
+            "type": "integer",
+            "title": "Unit Price",
+            "description": "Precio unitario en la moneda del comprobante.",
+            "example": 45000
+          },
+          "line_total": {
+            "type": "integer",
+            "title": "Line Total",
+            "description": "Total de la linea (precio x cantidad).",
+            "example": 90000
+          }
+        },
+        "type": "object",
+        "required": [
+          "product_name",
+          "quantity",
+          "unit_price",
+          "line_total"
+        ],
+        "title": "InvoiceItemOut"
+      },
+      "InvoiceListItemOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Identificador del comprobante.",
+            "example": "inv-123"
+          },
+          "number": {
+            "type": "integer",
+            "title": "Number",
+            "description": "Numero del comprobante.",
+            "example": 1
+          },
+          "order_id": {
+            "type": "string",
+            "title": "Order Id",
+            "description": "Pedido facturado.",
+            "example": "order-123"
+          },
+          "buyer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Id",
+            "description": "Comprador.",
+            "example": "buyer-123"
+          },
+          "buyer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Name",
+            "description": "Nombre del comprador (snapshot).",
+            "example": "Ana Perez"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Estado del comprobante.",
+            "example": "issued"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total del comprobante.",
+            "example": 107900
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "description": "Moneda.",
+            "example": "COP"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issued At",
+            "description": "Fecha de emision.",
+            "example": "2026-08-06T10:00:00Z"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "order_id",
+          "status",
+          "total",
+          "currency",
+          "issued_at"
+        ],
+        "title": "InvoiceListItemOut"
+      },
+      "InvoiceOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Identificador del comprobante.",
+            "example": "inv-123"
+          },
+          "number": {
+            "type": "integer",
+            "title": "Number",
+            "description": "Numero secuencial del comprobante en la tienda.",
+            "example": 1
+          },
+          "order_id": {
+            "type": "string",
+            "title": "Order Id",
+            "description": "Pedido facturado.",
+            "example": "order-123"
+          },
+          "store_id": {
+            "type": "string",
+            "title": "Store Id",
+            "description": "Tienda emisora.",
+            "example": "store-123"
+          },
+          "buyer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Id",
+            "description": "Comprador.",
+            "example": "buyer-123"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Estado del comprobante: issued, cancelled o returned.",
+            "example": "issued"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "description": "Moneda.",
+            "example": "COP"
+          },
+          "subtotal": {
+            "type": "integer",
+            "title": "Subtotal",
+            "description": "Subtotal facturado.",
+            "example": 90000
+          },
+          "discount_total": {
+            "type": "integer",
+            "title": "Discount Total",
+            "description": "Descuentos totales.",
+            "example": 0
+          },
+          "extra_charge_total": {
+            "type": "integer",
+            "title": "Extra Charge Total",
+            "description": "Cargos extra totales.",
+            "example": 5000
+          },
+          "shipping_cost": {
+            "type": "integer",
+            "title": "Shipping Cost",
+            "description": "Envio facturado (0 si es a convenir).",
+            "example": 12900
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total del comprobante.",
+            "example": 107900
+          },
+          "shipping_to_convenir": {
+            "type": "boolean",
+            "title": "Shipping To Convenir",
+            "description": "Indica si el envio es a convenir y no se factura.",
+            "example": false
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issued At",
+            "description": "Fecha de emision.",
+            "example": "2026-08-06T10:00:00Z"
+          },
+          "store_fiscal": {
+            "$ref": "#/components/schemas/InvoiceStoreFiscalOut",
+            "description": "Datos fiscales de la tienda (snapshot)."
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InvoiceItemOut"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Items facturados (snapshot)."
+          },
+          "charges": {
+            "items": {
+              "$ref": "#/components/schemas/InvoiceChargeOut"
+            },
+            "type": "array",
+            "title": "Charges",
+            "description": "Descuentos y cargos extra desglosados (snapshot)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "order_id",
+          "store_id",
+          "status",
+          "currency",
+          "subtotal",
+          "discount_total",
+          "extra_charge_total",
+          "shipping_cost",
+          "total",
+          "shipping_to_convenir",
+          "issued_at",
+          "store_fiscal",
+          "items"
+        ],
+        "title": "InvoiceOut"
+      },
+      "InvoiceStoreFiscalOut": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "Nombre comercial de la tienda.",
+            "example": "Nova Ropa"
+          },
+          "legal_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name",
+            "description": "Razon social/nombre fiscal.",
+            "example": "Nova Ropa SAS"
+          },
+          "tax_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Id",
+            "description": "Identificacion tributaria.",
+            "example": "900123456-7"
+          },
+          "fiscal_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fiscal Address",
+            "description": "Direccion fiscal.",
+            "example": "Cra 7 # 20-30, Bogota"
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email",
+            "description": "Correo de contacto.",
+            "example": "tienda@example.com"
+          },
+          "contact_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Phone",
+            "description": "Telefono de contacto.",
+            "example": "+573001112233"
+          }
+        },
+        "type": "object",
+        "title": "InvoiceStoreFiscalOut"
+      },
       "LoginIn": {
         "properties": {
           "email": {
@@ -10053,6 +11168,48 @@
           "created_at"
         ],
         "title": "MovementOut"
+      },
+      "OrderAssigneeIn": {
+        "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id",
+            "description": "Usuario de la tienda que queda como responsable; null para dejar el pedido sin asignar (HU-PED-05).",
+            "example": "user-123"
+          }
+        },
+        "type": "object",
+        "title": "OrderAssigneeIn",
+        "example": {
+          "assignee_id": "user-123"
+        }
+      },
+      "OrderCancelIn": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "description": "Motivo de la anulacion; se registra y se informa al comprador (HU-PED-04).",
+            "example": "Sin pago tras dos semanas"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "title": "OrderCancelIn",
+        "example": {
+          "reason": "Sin pago tras dos semanas"
+        }
       },
       "OrderItemOut": {
         "properties": {
@@ -10224,8 +11381,45 @@
           "status": {
             "type": "string",
             "title": "Status",
-            "description": "Estado operativo del pedido.",
+            "description": "Estado operativo del pedido (independiente del estado de pago).",
             "example": "pending"
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id",
+            "description": "Usuario de la tienda responsable del pedido (HU-PED-05); nulo si esta sin asignar."
+          },
+          "assigned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned At",
+            "description": "Fecha de la ultima asignacion de responsable."
+          },
+          "cancel_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Reason",
+            "description": "Motivo de anulacion cuando el pedido fue cancelado (HU-PED-04)."
           },
           "subtotal": {
             "type": "integer",
@@ -10293,6 +11487,24 @@
             ],
             "description": "Modalidad de envio usada para este pedido."
           },
+          "shipping_to_agree": {
+            "type": "boolean",
+            "title": "Shipping To Agree",
+            "description": "Indica que el envio se coordina con el vendedor (HU-ENV-03).",
+            "default": false,
+            "example": false
+          },
+          "store_contact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrderStoreContactOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Datos de contacto de la tienda para coordinar envio a convenir (HU-ENV-03)."
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/OrderItemOut"
@@ -10336,6 +11548,34 @@
         ],
         "title": "OrderOut"
       },
+      "OrderReturnIn": {
+        "properties": {
+          "restock": {
+            "type": "boolean",
+            "title": "Restock",
+            "description": "Si true, reintegra el stock al inventario; si false (dañado) no reintegra (HU-ENV-06).",
+            "example": true
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "description": "Motivo/resultado de la devolucion.",
+            "example": "Producto en buen estado"
+          }
+        },
+        "type": "object",
+        "required": [
+          "restock",
+          "reason"
+        ],
+        "title": "OrderReturnIn",
+        "example": {
+          "reason": "Producto en buen estado",
+          "restock": true
+        }
+      },
       "OrderStatusPatch": {
         "properties": {
           "status": {
@@ -10354,6 +11594,51 @@
         "example": {
           "status": "cancelled"
         }
+      },
+      "OrderStoreContactOut": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email",
+            "description": "Correo publico de la tienda.",
+            "example": "hola@nova.example"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone",
+            "description": "Telefono publico de la tienda.",
+            "example": "+573001112233"
+          },
+          "whatsapp_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Whatsapp Phone",
+            "description": "WhatsApp publico de la tienda.",
+            "example": "+573001112233"
+          }
+        },
+        "type": "object",
+        "title": "OrderStoreContactOut"
       },
       "PasswordChangeIn": {
         "properties": {
@@ -11831,6 +13116,20 @@
             "default": "draft",
             "example": "active"
           },
+          "shipping_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(own_rates|to_agree)$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipping Mode",
+            "description": "Override de modalidad de envio del producto sobre la tienda (HU-ENV-01): own_rates o to_agree; null hereda.",
+            "example": "to_agree"
+          },
           "category_ids": {
             "items": {
               "type": "string"
@@ -12027,6 +13326,19 @@
             "title": "Status",
             "description": "Estado visible del producto.",
             "example": "active"
+          },
+          "shipping_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipping Mode",
+            "description": "Override de modalidad de envio del producto (HU-ENV-01); null hereda de la tienda.",
+            "example": "to_agree"
           },
           "categories": {
             "items": {
@@ -12251,6 +13563,20 @@
             "description": "Nuevo estado operativo del producto.",
             "example": "active"
           },
+          "shipping_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(own_rates|to_agree)$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipping Mode",
+            "description": "Override de modalidad de envio (HU-ENV-01): own_rates o to_agree.",
+            "example": "to_agree"
+          },
           "category_ids": {
             "anyOf": [
               {
@@ -12413,6 +13739,19 @@
             "title": "Status",
             "description": "Estado visible del producto.",
             "example": "active"
+          },
+          "shipping_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipping Mode",
+            "description": "Override de modalidad de envio del producto (HU-ENV-01); null hereda de la tienda.",
+            "example": "to_agree"
           },
           "categories": {
             "items": {
@@ -14042,6 +15381,45 @@
             "title": "Active",
             "description": "Indica si la tienda esta activa; campo administrado.",
             "example": true
+          },
+          "legal_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name",
+            "description": "Razon social/nombre fiscal (HU-FAC-02); solo lectura, lo edita el admin.",
+            "example": "Nova Ropa SAS"
+          },
+          "tax_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Id",
+            "description": "Identificacion tributaria; solo lectura, lo edita el admin.",
+            "example": "900123456-7"
+          },
+          "fiscal_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fiscal Address",
+            "description": "Direccion fiscal; solo lectura, lo edita el admin.",
+            "example": "Cra 7 # 20-30, Bogota"
           }
         },
         "type": "object",
@@ -14238,6 +15616,202 @@
           "updated_at"
         ],
         "title": "SettingOut"
+      },
+      "ShipmentEventOut": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Estado de seguimiento registrado.",
+            "example": "shipped"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Nota o referencia de ese evento.",
+            "example": "Entregado a mensajero"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "Fecha y hora del evento.",
+            "example": "2026-08-06T10:00:00Z"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "created_at"
+        ],
+        "title": "ShipmentEventOut"
+      },
+      "ShipmentOut": {
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "title": "Order Id",
+            "description": "Pedido al que pertenece el envio.",
+            "example": "order-123"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Estado de seguimiento vigente; 'pending' si no hay actualizaciones.",
+            "example": "shipped"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Ultima nota o referencia de envio.",
+            "example": "Entregado a mensajero"
+          },
+          "carrier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Carrier",
+            "description": "Transportadora o mensajero.",
+            "example": "Mensajeria propia"
+          },
+          "tracking_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Number",
+            "description": "Numero de guia externo.",
+            "example": "ABC123"
+          },
+          "shipped_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipped At",
+            "description": "Fecha de despacho.",
+            "example": "2026-08-06T10:00:00Z"
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At",
+            "description": "Fecha de entrega."
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ShipmentEventOut"
+            },
+            "type": "array",
+            "title": "Events",
+            "description": "Linea de tiempo de solo lectura (HU-ENV-05)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_id",
+          "status"
+        ],
+        "title": "ShipmentOut"
+      },
+      "ShipmentUpdateIn": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "pattern": "^(preparing|shipped|in_transit|delivered|returned)$",
+            "title": "Status",
+            "description": "Estado de seguimiento del envio (HU-ENV-05).",
+            "example": "shipped"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Nota o referencia libre: guia externa, mensajero, hora estimada.",
+            "example": "Entregado a mensajero, llega mañana"
+          },
+          "carrier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Carrier",
+            "description": "Transportadora o mensajero (texto libre).",
+            "example": "Mensajeria propia"
+          },
+          "tracking_number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Number",
+            "description": "Numero de guia externo (texto libre).",
+            "example": "ABC123"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "ShipmentUpdateIn",
+        "example": {
+          "carrier": "Mensajeria propia",
+          "note": "Entregado a mensajero, llega mañana",
+          "status": "shipped",
+          "tracking_number": "ABC123"
+        }
       },
       "ShippingLocationIn": {
         "properties": {
@@ -14489,6 +16063,48 @@
             ],
             "title": "Contact Phone"
           },
+          "legal_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name",
+            "description": "Razon social/nombre fiscal (HU-FAC-02).",
+            "example": "Nova Ropa SAS"
+          },
+          "tax_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Id",
+            "description": "Identificacion tributaria.",
+            "example": "900123456-7"
+          },
+          "fiscal_address": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fiscal Address",
+            "description": "Direccion fiscal.",
+            "example": "Cra 7 # 20-30, Bogota"
+          },
           "owner_user_id": {
             "anyOf": [
               {
@@ -14565,6 +16181,45 @@
               }
             ],
             "title": "Contact Phone"
+          },
+          "legal_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name",
+            "description": "Razon social/nombre fiscal para el comprobante (HU-FAC-02).",
+            "example": "Nova Ropa SAS"
+          },
+          "tax_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Id",
+            "description": "Identificacion tributaria (NIT/RUT) de la tienda.",
+            "example": "900123456-7"
+          },
+          "fiscal_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fiscal Address",
+            "description": "Direccion fiscal de la tienda.",
+            "example": "Cra 7 # 20-30, Bogota"
           },
           "active": {
             "type": "boolean",
@@ -15001,6 +16656,45 @@
             ],
             "title": "Contact Phone"
           },
+          "legal_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name",
+            "description": "Razon social/nombre fiscal para el comprobante (HU-FAC-02).",
+            "example": "Nova Ropa SAS"
+          },
+          "tax_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Id",
+            "description": "Identificacion tributaria (NIT/RUT) de la tienda.",
+            "example": "900123456-7"
+          },
+          "fiscal_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fiscal Address",
+            "description": "Direccion fiscal de la tienda.",
+            "example": "Cra 7 # 20-30, Bogota"
+          },
           "active": {
             "type": "boolean",
             "title": "Active"
@@ -15028,14 +16722,62 @@
       "StorePatch": {
         "properties": {
           "active": {
-            "type": "boolean",
-            "title": "Active"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active",
+            "description": "Activa o desactiva la tienda.",
+            "example": true
+          },
+          "legal_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name",
+            "description": "Razon social/nombre fiscal (HU-FAC-02).",
+            "example": "Nova Ropa SAS"
+          },
+          "tax_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Id",
+            "description": "Identificacion tributaria.",
+            "example": "900123456-7"
+          },
+          "fiscal_address": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fiscal Address",
+            "description": "Direccion fiscal.",
+            "example": "Cra 7 # 20-30, Bogota"
           }
         },
         "type": "object",
-        "required": [
-          "active"
-        ],
         "title": "StorePatch"
       },
       "StorePaymentOptionsOut": {
@@ -15217,6 +16959,32 @@
             "default": 120000,
             "example": 120000
           },
+          "free_shipping_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Shipping From",
+            "description": "Inicio de vigencia del envio gratis por umbral (ISO date, opcional; HU-ENV-04).",
+            "example": "2026-12-01"
+          },
+          "free_shipping_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Shipping To",
+            "description": "Fin de vigencia del envio gratis por umbral (ISO date, opcional; HU-ENV-04).",
+            "example": "2026-12-31"
+          },
           "shipping_zones": {
             "items": {
               "additionalProperties": true,
@@ -15224,7 +16992,7 @@
             },
             "type": "array",
             "title": "Shipping Zones",
-            "description": "Zonas de envio configuradas por la tienda con city/region/cost/active/free_shipping opcionales.",
+            "description": "Zonas de envio con city/region/cost/active/free_shipping/free_shipping_min_subtotal/free_shipping_from/free_shipping_to opcionales.",
             "example": [
               {
                 "active": true,
@@ -15286,6 +17054,32 @@
             "default": 120000,
             "example": 120000
           },
+          "free_shipping_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Shipping From",
+            "description": "Inicio de vigencia del envio gratis por umbral (ISO date, opcional; HU-ENV-04).",
+            "example": "2026-12-01"
+          },
+          "free_shipping_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Shipping To",
+            "description": "Fin de vigencia del envio gratis por umbral (ISO date, opcional; HU-ENV-04).",
+            "example": "2026-12-31"
+          },
           "shipping_zones": {
             "items": {
               "additionalProperties": true,
@@ -15293,7 +17087,7 @@
             },
             "type": "array",
             "title": "Shipping Zones",
-            "description": "Zonas de envio configuradas por la tienda con city/region/cost/active/free_shipping opcionales.",
+            "description": "Zonas de envio con city/region/cost/active/free_shipping/free_shipping_min_subtotal/free_shipping_from/free_shipping_to opcionales.",
             "example": [
               {
                 "active": true,

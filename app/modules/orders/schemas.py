@@ -206,6 +206,57 @@ class WarehouseAssign(BaseModel):
     }
 
 
+class OrderCancelIn(BaseModel):
+    reason: str = Field(description="Motivo de la anulacion; se registra y se informa al comprador (HU-PED-04).", min_length=1, max_length=500, example="Sin pago tras dos semanas")
+
+    model_config = {"json_schema_extra": {"example": {"reason": "Sin pago tras dos semanas"}}}
+
+
+class ShipmentUpdateIn(BaseModel):
+    status: str = Field(description="Estado de seguimiento del envio (HU-ENV-05).", pattern="^(preparing|shipped|in_transit|delivered|returned)$", example="shipped")
+    note: str | None = Field(default=None, description="Nota o referencia libre: guia externa, mensajero, hora estimada.", max_length=500, example="Entregado a mensajero, llega mañana")
+    carrier: str | None = Field(default=None, description="Transportadora o mensajero (texto libre).", max_length=120, example="Mensajeria propia")
+    tracking_number: str | None = Field(default=None, description="Numero de guia externo (texto libre).", max_length=120, example="ABC123")
+
+    model_config = {"json_schema_extra": {"example": {"status": "shipped", "note": "Entregado a mensajero, llega mañana", "carrier": "Mensajeria propia", "tracking_number": "ABC123"}}}
+
+
+class ShipmentEventOut(BaseModel):
+    status: str = Field(description="Estado de seguimiento registrado.", example="shipped")
+    note: str | None = Field(default=None, description="Nota o referencia de ese evento.", example="Entregado a mensajero")
+    created_at: datetime = Field(description="Fecha y hora del evento.", example="2026-08-06T10:00:00Z")
+
+
+class ShipmentOut(BaseModel):
+    order_id: str = Field(description="Pedido al que pertenece el envio.", example="order-123")
+    status: str = Field(description="Estado de seguimiento vigente; 'pending' si no hay actualizaciones.", example="shipped")
+    note: str | None = Field(default=None, description="Ultima nota o referencia de envio.", example="Entregado a mensajero")
+    carrier: str | None = Field(default=None, description="Transportadora o mensajero.", example="Mensajeria propia")
+    tracking_number: str | None = Field(default=None, description="Numero de guia externo.", example="ABC123")
+    shipped_at: datetime | None = Field(default=None, description="Fecha de despacho.", example="2026-08-06T10:00:00Z")
+    delivered_at: datetime | None = Field(default=None, description="Fecha de entrega.", example=None)
+    events: list[ShipmentEventOut] = Field(default_factory=list, description="Linea de tiempo de solo lectura (HU-ENV-05).")
+
+
+class OrderReturnIn(BaseModel):
+    restock: bool = Field(description="Si true, reintegra el stock al inventario; si false (dañado) no reintegra (HU-ENV-06).", example=True)
+    reason: str = Field(description="Motivo/resultado de la devolucion.", min_length=1, max_length=500, example="Producto en buen estado")
+
+    model_config = {"json_schema_extra": {"example": {"restock": True, "reason": "Producto en buen estado"}}}
+
+
+class OrderAssigneeIn(BaseModel):
+    assignee_id: str | None = Field(default=None, description="Usuario de la tienda que queda como responsable; null para dejar el pedido sin asignar (HU-PED-05).", example="user-123")
+
+    model_config = {"json_schema_extra": {"example": {"assignee_id": "user-123"}}}
+
+
+class OrderStoreContactOut(BaseModel):
+    email: str | None = Field(default=None, description="Correo publico de la tienda.", example="hola@nova.example")
+    phone: str | None = Field(default=None, description="Telefono publico de la tienda.", example="+573001112233")
+    whatsapp_phone: str | None = Field(default=None, description="WhatsApp publico de la tienda.", example="+573001112233")
+
+
 class OrderItemOut(BaseModel):
     id: str = Field(description="Identificador historico del item de pedido.", example="item-123")
     variant_id: str | None = Field(default=None, description="Variante vendida.", example="variant-123")
@@ -235,7 +286,10 @@ class OrderOut(BaseModel):
     warehouse_id: str | None = Field(default=None, description="Almacen usado para reserva, despacho o venta POS.", example="wh-123")
     address_id: str | None = Field(default=None, description="Direccion de envio; nula para venta presencial.", example="addr-123")
     channel: str = Field(description="Canal de origen del pedido: online o presencial.", pattern="^(online|presencial)$", example="online")
-    status: str = Field(description="Estado operativo del pedido.", example="pending")
+    status: str = Field(description="Estado operativo del pedido (independiente del estado de pago).", example="pending")
+    assignee_id: str | None = Field(default=None, description="Usuario de la tienda responsable del pedido (HU-PED-05); nulo si esta sin asignar.", example=None)
+    assigned_at: datetime | None = Field(default=None, description="Fecha de la ultima asignacion de responsable.", example=None)
+    cancel_reason: str | None = Field(default=None, description="Motivo de anulacion cuando el pedido fue cancelado (HU-PED-04).", example=None)
     subtotal: int = Field(description="Subtotal historico en COP.", example=90000)
     shipping_cost: int = Field(description="Costo de envio en COP.", example=12900)
     tax: int = Field(description="Impuestos registrados en COP.", example=0)
@@ -244,6 +298,8 @@ class OrderOut(BaseModel):
     created_at: datetime = Field(description="Fecha de creacion del pedido.", example="2026-08-05T10:00:00Z")
     address: AddressOut | None = Field(default=None, description="Direccion historica asociada al pedido.")
     shipping: CheckoutShippingOut | None = Field(default=None, description="Modalidad de envio usada para este pedido.")
+    shipping_to_agree: bool = Field(default=False, description="Indica que el envio se coordina con el vendedor (HU-ENV-03).", example=False)
+    store_contact: OrderStoreContactOut | None = Field(default=None, description="Datos de contacto de la tienda para coordinar envio a convenir (HU-ENV-03).")
     items: list[OrderItemOut] = Field(description="Items historicos del pedido.")
     adjustments: list[CheckoutAdjustmentOut] = Field(default_factory=list, description="Descuentos y cargos extra historicos.")
     payments: list[dict] = Field(description="Pagos asociados al pedido.")

@@ -77,6 +77,9 @@ class Product(Base):
         nullable=False,
         default=ProductStatus.draft,
     )
+    # Override de la modalidad de envío de la tienda (HU-ENV-01). null = hereda de la tienda;
+    # valores: own_rates | to_agree.
+    shipping_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

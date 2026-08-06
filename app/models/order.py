@@ -117,6 +117,14 @@ class Order(Base):
     tax: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     notes: Mapped[str | None] = mapped_column(Text)
+    # Responsable del pedido dentro del equipo de la tienda (HU-PED-05). Nullable: los
+    # pedidos llegan "sin asignar" y cualquier miembro puede tomarlos o reasignarlos.
+    assignee_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.users.id", ondelete="SET NULL"), index=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Motivo registrado al anular el pedido (HU-PED-04).
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -126,13 +134,20 @@ class Order(Base):
 
     checkout_group = relationship("CheckoutGroup", back_populates="orders")
     store = relationship("Store", back_populates="orders")
-    buyer = relationship("User", back_populates="orders")
+    buyer = relationship("User", back_populates="orders", foreign_keys=[buyer_id])
+    assignee = relationship("User", foreign_keys=[assignee_id])
     warehouse = relationship("Warehouse")
     address = relationship("Address")
     items = relationship("OrderItem", back_populates="order")
     adjustments = relationship("OrderAdjustment", back_populates="order")
     payments = relationship("Payment", back_populates="order")
     shipments = relationship("Shipment", back_populates="order")
+    assignment_events = relationship(
+        "OrderAssignmentEvent",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="OrderAssignmentEvent.created_at",
+    )
 
 
 class OrderItem(Base):
@@ -175,3 +190,20 @@ class OrderAdjustment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     order = relationship("Order", back_populates="adjustments")
+
+
+class OrderAssignmentEvent(Base):
+    """Historial de reasignaciones del responsable de un pedido (HU-PED-05)."""
+
+    __tablename__ = "order_assignment_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    from_user_id: Mapped[str | None] = mapped_column(String(36))
+    to_user_id: Mapped[str | None] = mapped_column(String(36))
+    actor_user_id: Mapped[str | None] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    order = relationship("Order", back_populates="assignment_events")

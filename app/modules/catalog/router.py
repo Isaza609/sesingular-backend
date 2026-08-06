@@ -117,7 +117,13 @@ def _store_public_out(store: Store) -> dict:
 
 
 def _seller_store_out(store: Store) -> dict:
-    return {**_store_public_out(store), "active": store.active}
+    return {
+        **_store_public_out(store),
+        "active": store.active,
+        "legal_name": store.legal_name,
+        "tax_id": store.tax_id,
+        "fiscal_address": store.fiscal_address,
+    }
 
 
 def get_store_settings_value(store_id: str, db: Session) -> StoreSettingsOut:
@@ -270,9 +276,10 @@ def _product_out(product: Product, *, include_internal: bool = False, include_st
         "created_at": product.created_at,
         "updated_at": product.updated_at,
     }
+    data["shipping_mode"] = product.shipping_mode
     if include_store_context and db is not None:
         data["store_contact"] = _product_store_contact_out(product.store)
-        data["shipping"] = _product_shipping_out(product.store_id, db)
+        data["shipping"] = _product_shipping_out(product, db)
     return data
 
 
@@ -288,14 +295,21 @@ def _product_store_contact_out(store: Store) -> dict:
     }
 
 
-def _product_shipping_out(store_id: str, db: Session) -> dict:
-    settings = get_store_settings_value(store_id, db)
+def _product_shipping_out(product: Product, db: Session) -> dict:
+    settings = get_store_settings_value(product.store_id, db)
     zones = settings.shipping_zones or []
+    # HU-ENV-01: el override del producto prevalece sobre la modalidad de la tienda.
+    if product.shipping_mode == "to_agree":
+        to_agree = True
+    elif product.shipping_mode == "own_rates":
+        to_agree = False
+    else:
+        to_agree = settings.shipping_mode == "to_agree" or (settings.shipping_flat_cost == 0 and not zones)
     return {
         "flat_cost": settings.shipping_flat_cost,
         "free_threshold": settings.shipping_free_threshold,
         "zones": zones,
-        "to_agree": settings.shipping_flat_cost == 0 and not zones,
+        "to_agree": to_agree,
     }
 
 
@@ -588,7 +602,7 @@ def public_product(
     response_model=SellerStoreOut,
     status_code=status.HTTP_200_OK,
     summary="Consultar mi tienda",
-    description="Rol permitido: seller. HU-TDA-01. Retorna la tienda asociada y separa datos publicos editables de campos administrados.",
+    description="Rol permitido: seller. HU-TDA-01 y HU-FAC-02. Retorna la tienda asociada, sus datos publicos editables y los datos fiscales (solo lectura, administrados por el admin).",
     response_description="Perfil de tienda del vendedor autenticado.",
     responses=SELLER_STORE_RESPONSES,
 )
@@ -634,9 +648,13 @@ def seller_store_settings(store: Store = Depends(get_seller_store), db: Session 
     response_model=StoreSettingsOut,
     status_code=status.HTTP_200_OK,
     summary="Actualizar configuracion de tienda",
-    description="Rol permitido: seller. HU-TDA-03. Define pasarela automatizada, transferencia bancaria y Bre-B aceptados por la tienda.",
+    description=(
+        "Rol permitido: seller. HU-TDA-03, HU-ENV-01, HU-ENV-02 y HU-ENV-04. Define metodos de pago "
+        "y la configuracion de envio (modalidad, lugares y precios, envio gratis con vigencia). "
+        "La modalidad por zonas exige al menos un lugar activo."
+    ),
     response_description="Configuracion actualizada de la tienda.",
-    responses=STORE_SETTINGS_RESPONSES,
+    responses={**STORE_SETTINGS_RESPONSES, 400: {"description": "Modalidad por zonas sin ningun lugar activo."}},
 )
 def update_seller_store_settings(
     body: StoreSettingsIn,
@@ -644,6 +662,11 @@ def update_seller_store_settings(
     user: User = Depends(require_seller),
     db: Session = Depends(get_db),
 ):
+    # HU-ENV-01: activar "tarifas propias" por zonas exige al menos un lugar activo.
+    if body.shipping_mode == "zones":
+        active_zones = [z for z in (body.shipping_zones or []) if z.get("active", True)]
+        if not active_zones:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "La modalidad por zonas exige al menos un lugar activo")
     key = f"store_config:{store.id}"
     value = body.model_dump(mode="json")
     row = db.get(PlatformSetting, key)
@@ -834,6 +857,7 @@ def create_product(body: ProductIn, store: Store = Depends(get_seller_store), db
         badge=body.badge,
         bestseller=body.bestseller,
         status=body.status,
+        shipping_mode=body.shipping_mode,
     )
     db.add(product)
     db.flush()

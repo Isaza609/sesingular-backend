@@ -90,9 +90,16 @@ def transition(
     if new_status == PaymentStatus.paid:
         if order.status == OrderStatus.pending:
             order.status = OrderStatus.confirmed
+        # HU-FAC-01: al confirmarse el pago se emite el comprobante de venta (idempotente).
+        from app.modules.invoices.service import issue_invoice  # import diferido: evita ciclo
+
+        issue_invoice(db, order)
     elif new_status in (PaymentStatus.rejected, PaymentStatus.refunded):
         if order.status not in (OrderStatus.cancelled, OrderStatus.delivered, OrderStatus.returned):
             restock_order(db, order, note=f"Reposicion por {new_status.value}")
             order.status = OrderStatus.cancelled
+            from app.modules.invoices.service import sync_invoice_status  # import diferido
+
+            sync_invoice_status(db, order)
 
     return payment

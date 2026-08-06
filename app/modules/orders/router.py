@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, select
@@ -20,7 +20,7 @@ from app.modules.common import mailer
 from app.modules.common.permissions import get_seller_store, require_buyer
 from app.modules.common.storage import signed_url, upload_receipt
 from app.modules.inventory.service import active_warehouse_count, available_for_variant, consume_variant, reserve_variant, restock_order, single_active_warehouse
-from app.modules.orders.schemas import AddressIn, AddressOut, AddressPatch, CartItemIn, CartItemPatch, CheckoutConfirmationOut, CheckoutIn, CheckoutQuoteIn, CheckoutQuoteOut, CartOut, OrderOut, PaymentOut, PurchaseOut, OrderStatusPatch, WarehouseAssign
+from app.modules.orders.schemas import AddressIn, AddressOut, AddressPatch, CartItemIn, CartItemPatch, CheckoutConfirmationOut, CheckoutIn, CheckoutQuoteIn, CheckoutQuoteOut, CartOut, OrderOut, PaymentOut, PurchaseOut, OrderStatusPatch, ShipmentOut, WarehouseAssign
 from app.modules.payments import service as payment_service
 from app.modules.pricing.service import calculate_store_pricing, effective_unit_price, priced_items_from_cart_items
 
@@ -47,6 +47,9 @@ def _order_out(order: Order) -> dict:
         "address_id": order.address_id,
         "channel": order.channel.value,
         "status": order.status.value,
+        "assignee_id": order.assignee_id,
+        "assigned_at": order.assigned_at,
+        "cancel_reason": order.cancel_reason,
         "subtotal": order.subtotal,
         "shipping_cost": order.shipping_cost,
         "tax": order.tax,
@@ -55,6 +58,14 @@ def _order_out(order: Order) -> dict:
         "created_at": order.created_at,
         "address": _address_out(order.address) if order.address else None,
         "shipping": None,
+        "shipping_to_agree": order.shipping_cost == 0 and any(
+            (item.variant and item.variant.product and item.variant.product.shipping_mode == "to_agree") for item in order.items
+        ),
+        "store_contact": {
+            "email": order.store.contact_email,
+            "phone": order.store.contact_phone,
+            "whatsapp_phone": order.store.whatsapp_phone,
+        },
         "items": [{"id": item.id, "variant_id": item.variant_id, "product_name": item.product_name, "sku": item.sku, "quantity": item.quantity, "unit_price": item.unit_price, "unit_cost": item.unit_cost} for item in order.items],
         "adjustments": [
             {
@@ -508,13 +519,28 @@ def _zone_matches(zone: dict, location: dict) -> bool:
     return bool(_normalize_text(zone.get("city")) or _normalize_text(zone.get("region")) or _normalize_text(zone.get("country")))
 
 
-def _shipping_for_store(store: Store, subtotal: int, location: dict, db: Session) -> dict:
+def _free_shipping_window_active(config: dict) -> bool:
+    """HU-ENV-04: la promoción de envío gratis solo aplica dentro de su vigencia (si tiene fechas)."""
+    today = date.today()
+    start = config.get("free_shipping_from")
+    end = config.get("free_shipping_to")
+    try:
+        if start and today < date.fromisoformat(str(start)):
+            return False
+        if end and today > date.fromisoformat(str(end)):
+            return False
+    except ValueError:
+        return True
+    return True
+
+
+def _shipping_for_store(store: Store, subtotal: int, location: dict, db: Session, *, force_to_agree: bool = False) -> dict:
     settings = get_store_settings_value(store.id, db)
     mode = settings.shipping_mode
     zones = settings.shipping_zones or []
     contact_message = "Contacta al vendedor para acordar el costo de envio."
 
-    if mode == "to_agree":
+    if mode == "to_agree" or force_to_agree:
         return {
             "mode": "to_agree",
             "cost": 0,
@@ -543,15 +569,23 @@ def _shipping_for_store(store: Store, subtotal: int, location: dict, db: Session
         original_cost = int(selected_zone.get("cost", 0))
         label = selected_zone.get("label") or selected_zone.get("city") or selected_zone.get("region") or "Zona configurada"
         free_minimum = int(selected_zone.get("free_shipping_min_subtotal") or selected_zone.get("free_threshold") or 0)
-        zone_free = bool(selected_zone.get("free_shipping")) and (free_minimum == 0 or subtotal >= free_minimum)
+        zone_free = (
+            bool(selected_zone.get("free_shipping"))
+            and _free_shipping_window_active(selected_zone)
+            and (free_minimum == 0 or subtotal >= free_minimum)
+        )
     else:
         original_cost = int(settings.shipping_flat_cost)
         label = "Envio plano"
         zone_free = False
 
     threshold = int(settings.shipping_free_threshold or 0)
-    threshold_free = threshold > 0 and subtotal >= threshold
+    store_config = {"free_shipping_from": getattr(settings, "free_shipping_from", None), "free_shipping_to": getattr(settings, "free_shipping_to", None)}
+    threshold_free = threshold > 0 and subtotal >= threshold and _free_shipping_window_active(store_config)
     promotion_applied = zone_free or threshold_free
+    missing_for_free = None
+    if not promotion_applied and threshold > 0 and _free_shipping_window_active(store_config) and subtotal < threshold:
+        missing_for_free = threshold - subtotal
     return {
         "mode": mode,
         "cost": 0 if promotion_applied else original_cost,
@@ -560,7 +594,7 @@ def _shipping_for_store(store: Store, subtotal: int, location: dict, db: Session
         "requires_contact": False,
         "promotion_applied": promotion_applied,
         "label": label,
-        "message": "Envio gratis aplicado." if promotion_applied else None,
+        "message": "Envio gratis aplicado." if promotion_applied else (f"Te faltan {missing_for_free} para envio gratis." if missing_for_free else None),
     }
 
 
@@ -580,7 +614,8 @@ def _pricing_for_cart(cart: Cart, coupon_code: str | None, db: Session, *, shipp
             coupon_code=coupon_code,
             shipping_cost=0,
         )
-        shipping = _shipping_for_store(store, first_pass["subtotal_after_discounts"], shipping_location or {}, db)
+        force_to_agree = any((item.variant.product.shipping_mode == "to_agree") for item in items if item.variant and item.variant.product)
+        shipping = _shipping_for_store(store, first_pass["subtotal_after_discounts"], shipping_location or {}, db, force_to_agree=force_to_agree)
         result = calculate_store_pricing(
             store_id=store_id,
             priced_items=priced_items,
@@ -887,14 +922,24 @@ def buyer_purchase(purchase_id: str, user: User = Depends(require_buyer), db: Se
     response_model=list[OrderOut],
     status_code=status.HTTP_200_OK,
     summary="Listar pedidos del comprador",
-    description="Rol permitido: buyer. HU-CHK-05. Lista pedidos propios; para compras multi-tienda usar tambien /purchases para vista agrupada.",
-    response_description="Pedidos propios del comprador autenticado.",
+    description="Rol permitido: buyer. HU-PED-01 e HU-PED-03. Lista pedidos propios con su estado; filtra por estado y rango de fechas. Para compras multi-tienda usar tambien /purchases.",
+    response_description="Pedidos propios del comprador autenticado segun los filtros.",
     responses={401: {"description": "Token requerido o invalido."}, 403: {"description": "Requiere rol buyer."}, 422: {"description": "Validacion Pydantic."}},
 )
-def buyer_orders(status_filter: str | None = Query(None, alias="status", description="Estado de pedido para filtrar.", example="pending"), user: User = Depends(require_buyer), db: Session = Depends(get_db)):
+def buyer_orders(
+    status_filter: str | None = Query(None, alias="status", description="Estado de pedido para filtrar.", example="pending"),
+    date_from: date | None = Query(None, description="Fecha inicial inclusiva (por creacion)."),
+    date_to: date | None = Query(None, description="Fecha final inclusiva (por creacion)."),
+    user: User = Depends(require_buyer),
+    db: Session = Depends(get_db),
+):
     stmt = select(Order).where(Order.buyer_id == user.id).order_by(Order.created_at.desc())
     if status_filter:
         stmt = stmt.where(Order.status == status_filter)
+    if date_from:
+        stmt = stmt.where(Order.created_at >= datetime.combine(date_from, datetime.min.time(), timezone.utc))
+    if date_to:
+        stmt = stmt.where(Order.created_at <= datetime.combine(date_to, datetime.max.time(), timezone.utc))
     return [OrderOut.model_validate(_order_out(order)) for order in db.scalars(stmt).all()]
 
 
@@ -934,6 +979,50 @@ def cancel_order(order_id: str, user: User = Depends(require_buyer), db: Session
     db.commit()
     db.refresh(order)
     return OrderOut.model_validate(_order_out(order))
+
+
+# --- Seguimiento de envio del comprador (HU-ENV-05) --------------------------
+
+
+def _latest_shipment(order: Order):
+    if not order.shipments:
+        return None
+    return sorted(order.shipments, key=lambda s: s.created_at)[-1]
+
+
+def shipment_out_for_order(order: Order) -> dict:
+    """Estado de envio + linea de tiempo; sin envio devuelve el estado inicial sin inventar tracking."""
+    shipment = _latest_shipment(order)
+    if shipment is None:
+        return {"order_id": order.id, "status": "pending", "note": None, "carrier": None, "tracking_number": None, "shipped_at": None, "delivered_at": None, "events": []}
+    return {
+        "order_id": order.id,
+        "status": shipment.tracking_status or "pending",
+        "note": shipment.note,
+        "carrier": shipment.carrier,
+        "tracking_number": shipment.tracking_number,
+        "shipped_at": shipment.shipped_at,
+        "delivered_at": shipment.delivered_at,
+        "events": [{"status": e.status, "note": e.note, "created_at": e.created_at} for e in sorted(shipment.events, key=lambda e: e.created_at)],
+    }
+
+
+@buyer_router.get(
+    "/orders/{order_id}/shipment",
+    response_model=ShipmentOut,
+    status_code=status.HTTP_200_OK,
+    summary="Consultar seguimiento del envio",
+    description=(
+        "Rol permitido: buyer. HU-ENV-05. Devuelve el estado de envio de un pedido propio y su "
+        "linea de tiempo de solo lectura (estados con fecha y hora). Sin actualizaciones muestra el "
+        "estado inicial sin informacion falsa de tracking."
+    ),
+    response_description="Estado de envio y linea de tiempo del pedido.",
+    responses={401: {"description": "Token requerido o invalido."}, 403: {"description": "Requiere rol buyer."}, 404: {"description": "Pedido no encontrado dentro del scope del comprador."}, 422: {"description": "Validacion Pydantic."}},
+)
+def buyer_order_shipment(order_id: str, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
+    order = _buyer_order(order_id, user, db)
+    return shipment_out_for_order(order)
 
 
 # --- Pago manual del comprador (RF-PAGO-03 / RF-PAGO-05) ---------------------

@@ -138,3 +138,47 @@ def seed_manual_order(
 def reserved_units(db, variant_id: str) -> int:
     levels = db.query(StockLevel).filter(StockLevel.variant_id == variant_id).all()
     return sum(level.reserved for level in levels)
+
+
+def seed_store_member(db, store, suffix: str):
+    """Agrega un segundo usuario (seller) a la tienda para pruebas de equipo/asignación."""
+    from app.models import StoreMember, User
+    from app.models.user import UserRole
+
+    member = User(id=f"member-pag-{suffix}", email=f"member-pag-{suffix}@example.com", name=f"Equipo {suffix}", role=UserRole.seller)
+    db.add(member)
+    db.flush()
+    db.add(StoreMember(store_id=store.id, user_id=member.id, role="staff"))
+    db.commit()
+    return member
+
+
+def set_store_shipping_config(db, store, config: dict):
+    """Reemplaza la configuración de envío/pagos (store_config) de una tienda."""
+    key = f"store_config:{store.id}"
+    row = db.get(PlatformSetting, key)
+    base = {"payment_methods": {"gateway_enabled": True, "manual_transfer_enabled": True, "manual_breb_enabled": True}}
+    base.update(config)
+    if row is None:
+        db.add(PlatformSetting(key=key, value=base))
+    else:
+        row.value = base
+    db.commit()
+
+
+def add_order_charge(db, order, name: str, amount: int, kind: str = "extra_charge"):
+    """Agrega un ajuste (cargo extra o descuento) al pedido para probar el desglose del comprobante."""
+    from app.models import OrderAdjustment
+    from app.models.order import OrderAdjustmentKind
+
+    adj = OrderAdjustment(
+        order_id=order.id,
+        kind=OrderAdjustmentKind(kind),
+        source_type=kind,
+        name=name,
+        amount=amount,
+        metadata_json={},
+    )
+    db.add(adj)
+    db.commit()
+    return adj

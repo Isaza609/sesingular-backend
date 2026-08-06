@@ -20,6 +20,11 @@ class Store(Base):
     contact_phone: Mapped[str | None] = mapped_column(String(40))
     whatsapp_phone: Mapped[str | None] = mapped_column(String(40))
     social_links: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Datos fiscales/comerciales para el comprobante de venta (HU-FAC-02). Los registra
+    # y corrige el administrador; el vendedor los consulta.
+    legal_name: Mapped[str | None] = mapped_column(String(200))
+    tax_id: Mapped[str | None] = mapped_column(String(40))
+    fiscal_address: Mapped[str | None] = mapped_column(String(300))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
