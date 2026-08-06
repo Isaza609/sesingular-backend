@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.dialects.postgresql import JSONB
@@ -11,7 +13,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.db.base import Base
+from app.db.base import SCHEMA, Base
 from app.db.session import get_db
 from app.main import app
 from app.core.config import get_settings
@@ -137,4 +139,102 @@ def api_context(monkeypatch):
     finally:
         app.dependency_overrides.clear()
         db.close()
+        engine.dispose()
+
+
+def _integration_url() -> str | None:
+    """URL de la BD de test dedicada para los tests de integración de la Épica 10.
+
+    Nunca se usa `settings.database_url` directamente: apunta a Supabase de producción.
+    Se exige `TEST_DATABASE_URL` explícito y distinto de producción para no ejecutar DDL
+    destructiva (create/drop schema) contra datos reales. Sin él, los tests se saltan.
+    """
+    test_url = os.getenv("TEST_DATABASE_URL")
+    if not test_url:
+        return None
+    prod_url = get_settings().database_url
+    if test_url == prod_url:
+        return None
+    if "supabase.com" in test_url and os.getenv("ALLOW_SUPABASE_TEST") != "1":
+        # Guarda de seguridad: no correr contra infraestructura de producción por accidente.
+        return None
+    return test_url
+
+
+@pytest.fixture()
+def integration_context(monkeypatch):
+    """API real (TestClient) contra PostgreSQL real dedicado (Épica 10, HU-PAG-*).
+
+    Enrutamiento, validación Pydantic y persistencia son reales. Solo se mockean los
+    servicios de borde que no son la API bajo prueba: verificación de JWT (Supabase Auth),
+    almacenamiento de comprobantes (Supabase Storage) y correo (Resend). El esquema
+    `marketplace` se recrea por test para aislamiento total.
+    """
+    test_url = _integration_url()
+    if not test_url:
+        pytest.skip(
+            "Define TEST_DATABASE_URL con una BD PostgreSQL de test dedicada (distinta de "
+            "producción) para correr los tests de integración de pagos."
+        )
+
+    engine = create_engine(test_url, pool_pre_ping=True)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except OperationalError as exc:
+        engine.dispose()
+        pytest.skip(f"PostgreSQL de test no disponible ({test_url}): {exc}")
+
+    with engine.begin() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{SCHEMA}" CASCADE'))
+        conn.execute(text(f'CREATE SCHEMA "{SCHEMA}"'))
+    Base.metadata.create_all(engine)
+
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    db = TestingSessionLocal()
+    fake_auth = FakeAuthService()
+    token_map: dict[str, str] = {}
+    mail_calls: list[dict] = []
+
+    def override_get_db():
+        try:
+            yield db
+        finally:
+            pass
+
+    def fake_verify_token(token: str) -> dict:
+        user_id = token_map[token]
+        return {"sub": user_id, "email": f"{user_id}@example.com"}
+
+    def token_for(user_id: str) -> dict[str, str]:
+        token = f"token-{user_id}"
+        token_map[token] = user_id
+        return {"Authorization": f"Bearer {token}"}
+
+    def fake_send_email(to, subject, html):
+        mail_calls.append({"to": to, "subject": subject})
+
+    from app.modules.auth import deps as auth_deps
+    from app.modules.common import mailer
+    from app.modules.orders import router as orders_router
+    from app.modules.seller import router as seller_router
+
+    monkeypatch.setattr(auth_deps, "verify_token", fake_verify_token)
+    # Borde: correo (Resend). Registramos las notificaciones sin enviarlas.
+    monkeypatch.setattr(mailer, "send_email", fake_send_email)
+    # Borde: almacenamiento de comprobantes (Supabase Storage).
+    monkeypatch.setattr(orders_router, "upload_receipt", lambda content, content_type, store_id, order_id: f"{store_id}/{order_id}/receipt.pdf")
+    monkeypatch.setattr(orders_router, "signed_url", lambda path, expires_in=3600: (f"https://storage.test/{path}" if path else None))
+    monkeypatch.setattr(seller_router, "signed_url", lambda path, expires_in=3600: (f"https://storage.test/{path}" if path else None))
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_auth_service] = lambda: fake_auth
+    client = TestClient(app)
+    try:
+        yield client, db, token_for, mail_calls
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+        with engine.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{SCHEMA}" CASCADE'))
         engine.dispose()

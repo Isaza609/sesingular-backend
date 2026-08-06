@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import Dispute, Review, ReviewReport, Store, StoreMember, User
+from app.models import Dispute, Order, Payment, PaymentEvent, Review, ReviewReport, Store, StoreMember, User
+from app.models.payment import PaymentStatus
 from app.models.user import UserRole
 from app.modules.admin import service
 from app.modules.admin.schemas import (
@@ -32,6 +33,9 @@ from app.modules.admin.schemas import (
     StoreOut,
     StorePatch,
     TemporaryPasswordOut,
+    TransactionEventOut,
+    TransactionListOut,
+    TransactionOut,
     UserListOut,
     UserCreate,
     UserCreateOut,
@@ -541,3 +545,101 @@ def patch_dispute(dispute_id: str, body: DisputePatch, db: Session = Depends(get
         dispute.resolved_at = datetime.now(timezone.utc)
     db.commit()
     return {"id": dispute.id, "status": body.status}
+
+
+# --- Conciliacion de transacciones (HU-PAG-09) ------------------------------
+
+
+def _transaction_out(payment: Payment, *, with_events: bool = False) -> dict:
+    order = payment.order
+    store = order.store if order else None
+    buyer = order.buyer if order else None
+    data = {
+        "id": payment.id,
+        "order_id": payment.order_id,
+        "store_id": order.store_id if order else None,
+        "store_name": store.name if store else None,
+        "buyer_id": order.buyer_id if order else None,
+        "buyer_name": buyer.name if buyer else None,
+        "provider": payment.provider,
+        "method": payment.method,
+        "status": payment.status.value,
+        "amount": payment.amount,
+        "received_amount": payment.received_amount,
+        "currency": payment.currency,
+        "created_at": payment.created_at,
+        "events": [],
+    }
+    if with_events:
+        data["events"] = [
+            {
+                "id": event.id,
+                "from_status": event.from_status,
+                "to_status": event.to_status,
+                "actor_role": event.actor_role,
+                "actor_user_id": event.actor_user_id,
+                "received_amount": event.received_amount,
+                "note": event.note,
+                "created_at": event.created_at,
+            }
+            for event in sorted(payment.events, key=lambda e: e.created_at)
+        ]
+    return data
+
+
+@router.get(
+    "/transactions",
+    response_model=TransactionListOut,
+    status_code=status.HTTP_200_OK,
+    summary="Listar transacciones para conciliacion",
+    description=(
+        "Rol permitido: admin. HU-PAG-09. Lista las transacciones (pasarela y manuales) con su "
+        "estado y trazabilidad hacia pedido, tienda y metodo de pago, con filtros para conciliar."
+    ),
+    response_description="Transacciones que cumplen los filtros.",
+    responses=COMMON_RESPONSES,
+)
+def list_transactions(
+    transaction_status: str | None = Query(default=None, alias="status", pattern="^(pending|in_review|incomplete|paid|rejected|refunded)$", description="Filtra por estado de la transaccion."),
+    store_id: str | None = Query(default=None, description="Filtra por tienda."),
+    method: str | None = Query(default=None, description="Filtra por metodo de pago (card, transfer, breb, cash...)."),
+    order_id: str | None = Query(default=None, description="Filtra por pedido."),
+    date_from: date | None = Query(default=None, description="Fecha inicial inclusiva (por created_at)."),
+    date_to: date | None = Query(default=None, description="Fecha final inclusiva (por created_at)."),
+    db: Session = Depends(get_db),
+):
+    stmt = select(Payment).join(Order, Payment.order_id == Order.id)
+    if transaction_status:
+        stmt = stmt.where(Payment.status == PaymentStatus(transaction_status))
+    if store_id:
+        stmt = stmt.where(Order.store_id == store_id)
+    if method:
+        stmt = stmt.where(Payment.method == method)
+    if order_id:
+        stmt = stmt.where(Payment.order_id == order_id)
+    if date_from:
+        stmt = stmt.where(Payment.created_at >= datetime.combine(date_from, datetime.min.time(), timezone.utc))
+    if date_to:
+        stmt = stmt.where(Payment.created_at <= datetime.combine(date_to, datetime.max.time(), timezone.utc))
+    rows = db.scalars(stmt.order_by(Payment.created_at.desc())).unique().all()
+    items = [_transaction_out(row) for row in rows]
+    return {"items": items, "total": len(items)}
+
+
+@router.get(
+    "/transactions/{payment_id}",
+    response_model=TransactionOut,
+    status_code=status.HTTP_200_OK,
+    summary="Consultar transaccion con historial",
+    description=(
+        "Rol permitido: admin. HU-PAG-09. Detalle de una transaccion con su historial completo de "
+        "estados (eventos), conservando los estados anteriores para conciliacion y auditoria."
+    ),
+    response_description="Transaccion con su historial de estados.",
+    responses=COMMON_RESPONSES,
+)
+def get_transaction(payment_id: str, db: Session = Depends(get_db)):
+    payment = db.get(Payment, payment_id)
+    if payment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Transaccion no encontrada")
+    return _transaction_out(payment, with_events=True)

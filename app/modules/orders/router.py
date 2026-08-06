@@ -20,7 +20,8 @@ from app.modules.common import mailer
 from app.modules.common.permissions import get_seller_store, require_buyer
 from app.modules.common.storage import signed_url, upload_receipt
 from app.modules.inventory.service import active_warehouse_count, available_for_variant, consume_variant, reserve_variant, restock_order, single_active_warehouse
-from app.modules.orders.schemas import AddressIn, AddressOut, AddressPatch, CartItemIn, CartItemPatch, CheckoutConfirmationOut, CheckoutIn, CheckoutQuoteIn, CheckoutQuoteOut, CartOut, OrderOut, PurchaseOut, OrderStatusPatch, WarehouseAssign
+from app.modules.orders.schemas import AddressIn, AddressOut, AddressPatch, CartItemIn, CartItemPatch, CheckoutConfirmationOut, CheckoutIn, CheckoutQuoteIn, CheckoutQuoteOut, CartOut, OrderOut, PaymentOut, PurchaseOut, OrderStatusPatch, WarehouseAssign
+from app.modules.payments import service as payment_service
 from app.modules.pricing.service import calculate_store_pricing, effective_unit_price, priced_items_from_cart_items
 
 buyer_router = APIRouter(tags=["buyer"])
@@ -101,6 +102,7 @@ def _payment_out(payment: Payment | None, with_receipt: bool = False) -> dict | 
     """Estado del pago manual, con la cuenta destino y el comprobante firmado."""
     if payment is None:
         return None
+    difference = payment.amount - payment.received_amount if payment.received_amount is not None else None
     data = {
         "id": payment.id,
         "order_id": payment.order_id,
@@ -112,8 +114,10 @@ def _payment_out(payment: Payment | None, with_receipt: bool = False) -> dict | 
         "is_manual": payment.method in MANUAL_METHODS,
         "payout_account": _payout_account_out(payment.payout_account),
         "has_receipt": bool(payment.receipt_path),
+        "receipt_url": None,
         "receipt_uploaded_at": payment.receipt_uploaded_at,
         "received_amount": payment.received_amount,
+        "difference": difference,
         "review_note": payment.review_note,
         "reviewed_at": payment.reviewed_at,
     }
@@ -774,7 +778,10 @@ def checkout(body: CheckoutIn, background: BackgroundTasks, user: User = Depends
                 if account is None or account.store_id != store_id or not account.active or account.type != expected_type:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cuenta de cobro no valida para esta tienda")
                 payout_account_id = account.id
-            db.add(Payment(order_id=order.id, provider="manual" if is_manual else "pending", method=body.payment_method, status=PaymentStatus.pending, amount=order.total, platform_fee=order.total * commission_pct // 100, seller_amount=order.total - (order.total * commission_pct // 100), currency="COP", payout_account_id=payout_account_id))
+            payment = Payment(order_id=order.id, provider="manual" if is_manual else "pending", method=body.payment_method, status=PaymentStatus.pending, amount=order.total, platform_fee=order.total * commission_pct // 100, seller_amount=order.total - (order.total * commission_pct // 100), currency="COP", payout_account_id=payout_account_id)
+            db.add(payment)
+            db.flush()
+            payment_service.record_creation(db, payment, actor_role="buyer", actor_user_id=user.id)
             created.append(order)
         db.query(CartItem).filter(CartItem.cart_id == cart.id).delete(synchronize_session=False)
         db.commit()
@@ -939,23 +946,64 @@ def _buyer_order(order_id: str, user: User, db: Session) -> Order:
     return order
 
 
-@buyer_router.get("/orders/{order_id}/payment")
+PAYMENT_RESPONSES = {
+    400: {"description": "Debe elegirse una cuenta destino valida o el archivo es invalido."},
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol buyer."},
+    404: {"description": "Pedido o pago no encontrado dentro del scope del comprador."},
+    409: {"description": "El pedido o el pago ya no admite comprobantes."},
+    422: {"description": "Validacion Pydantic."},
+}
+
+
+@buyer_router.get(
+    "/orders/{order_id}/payment",
+    response_model=PaymentOut,
+    status_code=status.HTTP_200_OK,
+    summary="Consultar estado del pago",
+    description=(
+        "Rol permitido: buyer. HU-PAG-05. Devuelve el estado del pago del pedido, la cuenta "
+        "destino elegida, el monto exacto a pagar y el comprobante ya subido (URL firmada). "
+        "Sin comprobante el estado es `pending` (pendiente_pago)."
+    ),
+    response_description="Estado del pago con cuenta destino y comprobante.",
+    responses={
+        401: PAYMENT_RESPONSES[401],
+        403: PAYMENT_RESPONSES[403],
+        404: {"description": "Pedido no encontrado dentro del scope del comprador."},
+        422: PAYMENT_RESPONSES[422],
+    },
+)
 def buyer_order_payment(order_id: str, user: User = Depends(require_buyer), db: Session = Depends(get_db)):
-    """Estado del pago, cuenta destino y comprobante ya subido."""
     order = _buyer_order(order_id, user, db)
-    return _payment_out(_latest_payment(order), with_receipt=True)
+    payment = _latest_payment(order)
+    if payment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "El pedido no tiene un pago asociado")
+    return _payment_out(payment, with_receipt=True)
 
 
-@buyer_router.post("/orders/{order_id}/payment/receipt")
+@buyer_router.post(
+    "/orders/{order_id}/payment/receipt",
+    response_model=PaymentOut,
+    status_code=status.HTTP_200_OK,
+    summary="Subir comprobante de pago",
+    description=(
+        "Rol permitido: buyer. HU-PAG-05 y HU-PAG-07. Sube (o reemplaza) el comprobante de una "
+        "transferencia o pago Bre-B en imagen o PDF y deja el pago en revision del vendedor "
+        "(`in_review` / comprobante_subido). Reabre la revision si el pago venia rechazado o "
+        "incompleto (pago_incompleto). El stock permanece reservado."
+    ),
+    response_description="Pago actualizado con el comprobante en revision.",
+    responses=PAYMENT_RESPONSES,
+)
 def upload_payment_receipt(
     order_id: str,
     background: BackgroundTasks,
-    file: UploadFile = File(...),
-    payout_account_id: str | None = Form(default=None),
+    file: UploadFile = File(..., description="Comprobante en JPG, PNG o PDF (max 5 MB)."),
+    payout_account_id: str | None = Form(default=None, description="Cuenta destino elegida; obligatoria si aun no se fijo."),
     user: User = Depends(require_buyer),
     db: Session = Depends(get_db),
 ):
-    """Sube (o reemplaza) el comprobante y deja el pago en revisión del vendedor."""
     order = _buyer_order(order_id, user, db)
     if order.status in (OrderStatus.cancelled, OrderStatus.returned):
         raise HTTPException(status.HTTP_409_CONFLICT, "El pedido ya no admite comprobantes")
@@ -977,12 +1025,15 @@ def upload_payment_receipt(
     content = file.file.read()
     payment.receipt_path = upload_receipt(content, file.content_type, order.store_id, order.id)
     payment.receipt_uploaded_at = datetime.now(timezone.utc)
-    payment.status = PaymentStatus.in_review
     payment.provider = "manual"
     # Un comprobante nuevo reabre la revisión: se limpia el veredicto anterior.
     payment.review_note = None
     payment.reviewed_at = None
     payment.reviewed_by = None
+    # El comprador vuelve a dejar el pago en revisión (desde pending o pago_incompleto).
+    payment_service.transition(
+        db, payment, PaymentStatus.in_review, actor_role="buyer", actor_user_id=user.id, note="Comprobante subido"
+    )
     db.commit()
     db.refresh(payment)
 

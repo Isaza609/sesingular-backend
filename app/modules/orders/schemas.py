@@ -336,6 +336,38 @@ class PurchaseOut(BaseModel):
     store_statuses: list[dict] = Field(description="Estado de cada tienda dentro de la compra.")
 
 
+class PaymentPayoutAccountOut(BaseModel):
+    id: str = Field(description="Identificador de la cuenta de cobro destino.", example="acc-123")
+    type: str = Field(description="Tipo de cuenta: bank o bre_b.", example="bank")
+    label: str | None = Field(default=None, description="Etiqueta visible de la cuenta.", example="Ahorros principal")
+    bank_name: str | None = Field(default=None, description="Banco (si es transferencia).", example="Bancolombia")
+    account_type: str | None = Field(default=None, description="Tipo de cuenta bancaria.", example="ahorros")
+    account_number: str | None = Field(default=None, description="Numero de cuenta.", example="12345678901")
+    breb_key: str | None = Field(default=None, description="Llave Bre-B (si aplica).", example="nova@breb")
+    holder_name: str = Field(description="Titular de la cuenta.", example="Nova Ropa SAS")
+    holder_document: str | None = Field(default=None, description="Documento del titular.", example="900123456")
+    active: bool = Field(description="Indica si la cuenta sigue activa.", example=True)
+
+
+class PaymentOut(BaseModel):
+    id: str = Field(description="Identificador del pago.", example="pay-123")
+    order_id: str = Field(description="Pedido al que pertenece el pago.", example="order-123")
+    method: str | None = Field(default=None, description="Metodo elegido: card, transfer, breb, etc.", example="transfer")
+    provider: str = Field(description="Proveedor: manual, pending o pasarela.", example="manual")
+    status: str = Field(description="Estado del pago: pending, in_review, incomplete, paid, rejected, refunded.", example="in_review")
+    amount: int = Field(description="Monto esperado del pago en la moneda del pedido.", example=110000)
+    currency: str = Field(description="Moneda del pago.", example="COP")
+    is_manual: bool = Field(description="Indica si el pago es manual (transferencia/Bre-B).", example=True)
+    payout_account: PaymentPayoutAccountOut | None = Field(default=None, description="Cuenta destino elegida para el pago manual.")
+    has_receipt: bool = Field(description="Indica si ya hay un comprobante cargado.", example=True)
+    receipt_url: str | None = Field(default=None, description="URL firmada temporal del comprobante (solo en el detalle).", example="https://.../comprobante.pdf")
+    receipt_uploaded_at: datetime | None = Field(default=None, description="Fecha de subida del comprobante.", example="2026-08-05T10:05:00Z")
+    received_amount: int | None = Field(default=None, description="Monto que el vendedor registro como recibido.", example=90000)
+    difference: int | None = Field(default=None, description="Diferencia esperado - recibido cuando hay novedad (positivo: faltante).", example=20000)
+    review_note: str | None = Field(default=None, description="Nota de la revision o novedad del vendedor.", example="Faltan $20.000")
+    reviewed_at: datetime | None = Field(default=None, description="Fecha de la ultima revision.", example="2026-08-05T11:00:00Z")
+
+
 class PosItemIn(BaseModel):
     variant_id: str = Field(description="Variante propia de la tienda a vender por POS.", example="variant-123")
     quantity: int = Field(description="Cantidad a vender en mostrador.", ge=1, le=1000, example=2)

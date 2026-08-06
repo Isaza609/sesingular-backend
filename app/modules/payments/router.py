@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,13 +10,40 @@ from app.models.order import OrderStatus
 from app.models.payment import PaymentStatus
 from app.models.user import User
 from app.modules.common.permissions import require_buyer
-from app.modules.inventory.service import restock_order
-from app.modules.orders.router import _order_out
+from app.modules.payments import service as payment_service
+from app.modules.payments.schemas import PaymentIntentOut, WebhookIn, WebhookResultOut
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
+INTENT_RESPONSES = {
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol buyer."},
+    404: {"description": "Pedido no encontrado dentro del scope del comprador."},
+    409: {"description": "El pedido esta cancelado."},
+    422: {"description": "Validacion Pydantic."},
+}
 
-@router.post("/orders/{order_id}/intent")
+WEBHOOK_RESPONSES = {
+    400: {"description": "Estado de pago no soportado o falta identificar el pago."},
+    401: {"description": "Firma de webhook invalida."},
+    404: {"description": "Pago no encontrado."},
+    422: {"description": "Validacion Pydantic."},
+}
+
+
+@router.post(
+    "/orders/{order_id}/intent",
+    response_model=PaymentIntentOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crear intento de pago por pasarela",
+    description=(
+        "Rol permitido: buyer. HU-PAG-02. Crea (o reutiliza) el pago pendiente del pedido para "
+        "cobrarlo por la pasarela automatizada configurada por la plataforma y registra la "
+        "transaccion (HU-PAG-09)."
+    ),
+    response_description="Intento de pago con proveedor y monto a cobrar.",
+    responses=INTENT_RESPONSES,
+)
 def create_payment_intent(order_id: str, payment_method: str = "card", user: User = Depends(require_buyer), db: Session = Depends(get_db)):
     order = db.get(Order, order_id)
     if order is None or order.buyer_id != user.id:
@@ -29,6 +54,8 @@ def create_payment_intent(order_id: str, payment_method: str = "card", user: Use
     if payment is None:
         payment = Payment(order_id=order.id, provider="pending", method=payment_method, status=PaymentStatus.pending, amount=order.total, seller_amount=order.total, currency="COP")
         db.add(payment)
+        db.flush()
+        payment_service.record_creation(db, payment, actor_role="buyer", actor_user_id=user.id)
         db.commit()
         db.refresh(payment)
     gateway = db.get(PlatformSetting, "payment_gateway")
@@ -39,10 +66,22 @@ def create_payment_intent(order_id: str, payment_method: str = "card", user: Use
     return {"payment_id": payment.id, "order_id": order.id, "provider": provider, "status": payment.status.value, "amount": payment.amount, "currency": payment.currency, "checkout_url": None}
 
 
-@router.post("/webhooks/{provider}")
+@router.post(
+    "/webhooks/{provider}",
+    response_model=WebhookResultOut,
+    status_code=status.HTTP_200_OK,
+    summary="Recibir notificacion de la pasarela",
+    description=(
+        "Endpoint de integracion (pasarela). HU-PAG-02 y HU-PAG-09. Aplica el resultado del pago "
+        "notificado por la pasarela: aprobado confirma el pedido; rechazado o reembolsado repone "
+        "el stock y cancela el pedido. Valida la firma del webhook contra la configurada por el admin."
+    ),
+    response_description="Pago afectado con su nuevo estado.",
+    responses=WEBHOOK_RESPONSES,
+)
 def payment_webhook(
     provider: str,
-    body: dict,
+    body: WebhookIn,
     x_webhook_secret: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
@@ -50,9 +89,10 @@ def payment_webhook(
     configured_secret = (gateway.value if gateway else {}).get("webhook_secret", "")
     if configured_secret and x_webhook_secret != configured_secret:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Firma de webhook inválida")
-    provider_payment_id = body.get("provider_payment_id") or body.get("data", {}).get("id")
-    order_id = body.get("order_id")
-    raw_status = str(body.get("status") or body.get("data", {}).get("status") or "pending").lower()
+    data = body.data or {}
+    provider_payment_id = body.provider_payment_id or data.get("id")
+    order_id = body.order_id
+    raw_status = str(body.status or data.get("status") or "pending").lower()
     status_map = {"approved": PaymentStatus.paid.value, "paid": PaymentStatus.paid.value, "rejected": PaymentStatus.rejected.value, "refunded": PaymentStatus.refunded.value, "pending": PaymentStatus.pending.value}
     new_status = status_map.get(raw_status)
     if new_status is None:
@@ -68,13 +108,13 @@ def payment_webhook(
     if payment is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pago no encontrado")
     payment.provider_payment_id = str(provider_payment_id) if provider_payment_id else payment.provider_payment_id
-    payment.status = PaymentStatus(new_status)
-    payment.raw_payload = body
-    order = payment.order
-    if payment.status == PaymentStatus.paid:
-        order.status = OrderStatus.confirmed
-    elif payment.status in (PaymentStatus.rejected, PaymentStatus.refunded) and order.status not in (OrderStatus.cancelled, OrderStatus.delivered, OrderStatus.returned):
-        restock_order(db, order, note="Reposicion por pago rechazado o reembolsado")
-        order.status = OrderStatus.cancelled
+    payment.raw_payload = body.model_dump()
+    payment_service.transition(
+        db,
+        payment,
+        PaymentStatus(new_status),
+        actor_role="gateway",
+        note=f"Webhook {provider}: {raw_status}",
+    )
     db.commit()
-    return {"payment_id": payment.id, "order_id": order.id, "status": payment.status.value}
+    return {"payment_id": payment.id, "order_id": payment.order_id, "status": payment.status.value}

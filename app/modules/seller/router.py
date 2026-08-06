@@ -20,6 +20,7 @@ from app.modules.common.storage import signed_url
 from app.modules.inventory.service import consume_reserved_order_from_warehouse, consume_variant, fulfill_reserved_order, restock_order
 from app.modules.orders.router import _order_out, _payout_account_out
 from app.modules.orders.schemas import OrderOut, OrderStatusPatch, PosOrderIn, WarehouseAssign
+from app.modules.payments import service as payment_service
 from app.modules.seller.schemas import (
     CouponIn,
     CouponPatch,
@@ -27,13 +28,17 @@ from app.modules.seller.schemas import (
     ExtraChargeOut,
     ExtraChargePatch,
     PaymentConfirmIn,
+    PaymentIncompleteIn,
+    PaymentOverpaidIn,
     PaymentRejectIn,
     PayoutAccountIn,
+    PayoutAccountOut,
     PayoutAccountPatch,
     PromotionIn,
     PromotionOut,
     PromotionPatch,
     SalesChannelReportOut,
+    SellerPaymentOut,
     SellerStoreMemberOut,
 )
 
@@ -263,7 +268,7 @@ def assign_order_warehouse(order_id: str, body: WarehouseAssign, store: Store = 
     response_description="Pedido presencial creado, entregado, con pago POS pagado e inventario descontado.",
     responses=POS_ORDER_RESPONSES,
 )
-def create_pos_order(body: PosOrderIn, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
+def create_pos_order(body: PosOrderIn, store: Store = Depends(get_seller_store), user: User = Depends(require_seller), db: Session = Depends(get_db)):
     warehouse = db.scalar(select(Warehouse).where(Warehouse.store_id == store.id, Warehouse.active.is_(True), Warehouse.is_default.is_(True)))
     if warehouse is None:
         warehouse = db.scalar(select(Warehouse).where(Warehouse.store_id == store.id, Warehouse.active.is_(True)).order_by(Warehouse.name))
@@ -304,7 +309,10 @@ def create_pos_order(body: PosOrderIn, store: Store = Depends(get_seller_store),
         setting = db.get(PlatformSetting, "commission")
         pct = int((setting.value if setting else {}).get("value", 0))
         fee = subtotal * pct // 100
-        db.add(Payment(order_id=order.id, provider="pos", method=body.payment_method, status=PaymentStatus.paid, amount=subtotal, platform_fee=fee, seller_amount=subtotal - fee, currency="COP"))
+        pos_payment = Payment(order_id=order.id, provider="pos", method=body.payment_method, status=PaymentStatus.paid, amount=subtotal, platform_fee=fee, seller_amount=subtotal - fee, currency="COP")
+        db.add(pos_payment)
+        db.flush()
+        payment_service.record_creation(db, pos_payment, actor_role="seller", actor_user_id=user.id)
         db.commit()
     except Exception:
         db.rollback()
@@ -685,20 +693,43 @@ def seller_customers(store: Store = Depends(get_seller_store), db: Session = Dep
     return [{"id": row.id, "name": row.name, "email": row.email, "tier": row.tier, "orders": row.orders, "spent": row.spent} for row in rows]
 
 
-# --- Cuentas de cobro manual (RF-PAGO-01) -----------------------------------
+# --- Cuentas de cobro manual (HU-PAG-03 / HU-PAG-04) ------------------------
+
+PAYOUT_RESPONSES = {
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol seller."},
+    404: {"description": "Cuenta de cobro no encontrada en la tienda del vendedor."},
+    422: {"description": "Validacion Pydantic (datos incompletos por tipo de cuenta)."},
+}
 
 
-@router.get("/payout-accounts")
+@router.get(
+    "/payout-accounts",
+    response_model=list[PayoutAccountOut],
+    status_code=status.HTTP_200_OK,
+    summary="Listar cuentas de cobro",
+    description="Rol permitido: seller. HU-PAG-03 y HU-PAG-04. Lista las cuentas de cobro manual (banco/Bre-B) de la tienda, activas e inactivas.",
+    response_description="Cuentas de cobro de la tienda.",
+    responses=PAYOUT_RESPONSES,
+)
 def list_payout_accounts(store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     rows = db.scalars(
         select(PayoutAccount)
         .where(PayoutAccount.store_id == store.id)
         .order_by(PayoutAccount.active.desc(), PayoutAccount.created_at.desc())
     ).all()
-    return [_payout_account_out(row) for row in rows]
+    return [_seller_payout_account_out(row) for row in rows]
 
 
-@router.post("/payout-accounts", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/payout-accounts",
+    response_model=PayoutAccountOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Registrar cuenta de cobro",
+    description="Rol permitido: seller. HU-PAG-03. Registra una cuenta bancaria o llave Bre-B como medio de cobro manual de la tienda.",
+    response_description="Cuenta de cobro creada.",
+    responses=PAYOUT_RESPONSES,
+)
 def create_payout_account(body: PayoutAccountIn, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     values = body.model_dump()
     values["type"] = PayoutAccountType(values["type"])
@@ -706,7 +737,23 @@ def create_payout_account(body: PayoutAccountIn, store: Store = Depends(get_sell
     db.add(account)
     db.commit()
     db.refresh(account)
-    return _payout_account_out(account)
+    return _seller_payout_account_out(account)
+
+
+def _seller_payout_account_out(account: PayoutAccount) -> dict:
+    return {
+        "id": account.id,
+        "store_id": account.store_id,
+        "type": account.type.value,
+        "label": account.label,
+        "bank_name": account.bank_name,
+        "account_type": account.account_type,
+        "account_number": account.account_number,
+        "breb_key": account.breb_key,
+        "holder_name": account.holder_name,
+        "holder_document": account.holder_document,
+        "active": account.active,
+    }
 
 
 def _seller_payout_account(account_id: str, store: Store, db: Session) -> PayoutAccount:
@@ -716,31 +763,55 @@ def _seller_payout_account(account_id: str, store: Store, db: Session) -> Payout
     return account
 
 
-@router.patch("/payout-accounts/{account_id}")
+@router.patch(
+    "/payout-accounts/{account_id}",
+    response_model=PayoutAccountOut,
+    status_code=status.HTTP_200_OK,
+    summary="Actualizar o reactivar cuenta de cobro",
+    description="Rol permitido: seller. HU-PAG-04. Actualiza los datos de una cuenta o la reactiva con `active=true`.",
+    response_description="Cuenta de cobro actualizada.",
+    responses=PAYOUT_RESPONSES,
+)
 def patch_payout_account(account_id: str, body: PayoutAccountPatch, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
     account = _seller_payout_account(account_id, store, db)
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(account, key, value)
     db.commit()
     db.refresh(account)
-    return _payout_account_out(account)
+    return _seller_payout_account_out(account)
 
 
-@router.delete("/payout-accounts/{account_id}")
+@router.delete(
+    "/payout-accounts/{account_id}",
+    response_model=PayoutAccountOut,
+    status_code=status.HTTP_200_OK,
+    summary="Desactivar cuenta de cobro",
+    description="Rol permitido: seller. HU-PAG-04. Baja logica: deja de ofrecerse en el checkout pero conserva la referencia en pedidos ya pagados con esa cuenta.",
+    response_description="Cuenta de cobro desactivada.",
+    responses=PAYOUT_RESPONSES,
+)
 def deactivate_payout_account(account_id: str, store: Store = Depends(get_seller_store), db: Session = Depends(get_db)):
-    """Baja lÃ³gica: conserva la referencia en pedidos ya pagados con esa cuenta."""
     account = _seller_payout_account(account_id, store, db)
     account.active = False
     db.commit()
     db.refresh(account)
-    return _payout_account_out(account)
+    return _seller_payout_account_out(account)
 
 
-# --- RevisiÃ³n de comprobantes (RF-PAGO-03) ----------------------------------
+# --- Revision de comprobantes (HU-PAG-06 / HU-PAG-07) -----------------------
+
+PAYMENT_REVIEW_RESPONSES = {
+    401: {"description": "Token requerido o invalido."},
+    403: {"description": "Requiere rol seller."},
+    404: {"description": "Pago no encontrado en la tienda del vendedor."},
+    409: {"description": "El pago ya fue revisado o no admite esta accion."},
+    422: {"description": "Validacion Pydantic."},
+}
 
 
 def _seller_payment_out(payment: Payment) -> dict:
     order = payment.order
+    difference = payment.amount - payment.received_amount if payment.received_amount is not None else None
     return {
         "id": payment.id,
         "order_id": order.id,
@@ -750,24 +821,38 @@ def _seller_payment_out(payment: Payment) -> dict:
         "currency": payment.currency,
         "buyer_name": order.buyer.name if order.buyer else None,
         "buyer_email": order.buyer.email if order.buyer else None,
+        "buyer_phone": getattr(order.buyer, "phone", None) if order.buyer else None,
         "order_status": order.status.value,
         "created_at": order.created_at,
         "receipt_uploaded_at": payment.receipt_uploaded_at,
         "receipt_url": signed_url(payment.receipt_path),
         "received_amount": payment.received_amount,
+        "difference": difference,
         "review_note": payment.review_note,
+        "agreement_note": payment.agreement_note,
         "reviewed_at": payment.reviewed_at,
-        "payout_account": _payout_account_out(payment.payout_account),
+        "payout_account": _seller_payout_account_out(payment.payout_account) if payment.payout_account else None,
     }
 
 
-@router.get("/payments")
+@router.get(
+    "/payments",
+    response_model=list[SellerPaymentOut],
+    status_code=status.HTTP_200_OK,
+    summary="Listar pagos por revisar",
+    description=(
+        "Rol permitido: seller. HU-PAG-06. Bandeja de pagos manuales de la tienda. Por defecto "
+        "muestra los que esperan revision (`in_review`); acepta `status` para filtrar por cualquier "
+        "estado, incluido `incomplete` (pago_incompleto)."
+    ),
+    response_description="Pagos manuales de la tienda segun el filtro.",
+    responses={401: PAYMENT_REVIEW_RESPONSES[401], 403: PAYMENT_REVIEW_RESPONSES[403], 422: PAYMENT_REVIEW_RESPONSES[422]},
+)
 def seller_payments(
-    payment_status: str | None = Query(default=None, alias="status", pattern="^(pending|in_review|paid|rejected|refunded)$"),
+    payment_status: str | None = Query(default=None, alias="status", pattern="^(pending|in_review|incomplete|paid|rejected|refunded)$", description="Estado a filtrar; por defecto in_review."),
     store: Store = Depends(get_seller_store),
     db: Session = Depends(get_db),
 ):
-    """Bandeja de pagos manuales de la tienda (por defecto, los que esperan revisiÃ³n)."""
     stmt = select(Payment).join(Order, Payment.order_id == Order.id).where(Order.store_id == store.id)
     if payment_status:
         stmt = stmt.where(Payment.status == PaymentStatus(payment_status))
@@ -784,7 +869,18 @@ def _seller_payment(payment_id: str, store: Store, db: Session) -> Payment:
     return payment
 
 
-@router.post("/payments/{payment_id}/confirm")
+@router.post(
+    "/payments/{payment_id}/confirm",
+    response_model=SellerPaymentOut,
+    status_code=status.HTTP_200_OK,
+    summary="Confirmar comprobante",
+    description=(
+        "Rol permitido: seller. HU-PAG-06 y HU-PAG-07. Confirma que el dinero llego registrando el "
+        "monto recibido; el pago pasa a `paid` (pago_confirmado) y el pedido avanza a confirmado."
+    ),
+    response_description="Pago confirmado.",
+    responses=PAYMENT_REVIEW_RESPONSES,
+)
 def confirm_manual_payment(
     payment_id: str,
     body: PaymentConfirmIn,
@@ -793,18 +889,17 @@ def confirm_manual_payment(
     user: User = Depends(require_seller),
     db: Session = Depends(get_db),
 ):
-    """El vendedor confirma que el dinero llegÃ³, registrando el monto recibido."""
     payment = _seller_payment(payment_id, store, db)
-    if payment.status not in (PaymentStatus.in_review, PaymentStatus.pending):
+    if payment.status not in (PaymentStatus.in_review, PaymentStatus.pending, PaymentStatus.incomplete):
         raise HTTPException(status.HTTP_409_CONFLICT, "Este pago ya fue revisado")
     order = payment.order
-    payment.status = PaymentStatus.paid
     payment.received_amount = body.received_amount
     payment.review_note = body.note
     payment.reviewed_at = datetime.now(timezone.utc)
     payment.reviewed_by = user.id
-    if order.status == OrderStatus.pending:
-        order.status = OrderStatus.confirmed
+    payment_service.transition(
+        db, payment, PaymentStatus.paid, actor_role="seller", actor_user_id=user.id, note=body.note, received_amount=body.received_amount
+    )
     db.commit()
     db.refresh(payment)
 
@@ -818,7 +913,18 @@ def confirm_manual_payment(
     return _seller_payment_out(payment)
 
 
-@router.post("/payments/{payment_id}/reject")
+@router.post(
+    "/payments/{payment_id}/reject",
+    response_model=SellerPaymentOut,
+    status_code=status.HTTP_200_OK,
+    summary="Rechazar comprobante",
+    description=(
+        "Rol permitido: seller. HU-PAG-06. Rechaza el pago: pasa a `rejected` (pago_rechazado), "
+        "libera el stock reservado, cancela el pedido y notifica al comprador con el motivo."
+    ),
+    response_description="Pago rechazado.",
+    responses=PAYMENT_REVIEW_RESPONSES,
+)
 def reject_manual_payment(
     payment_id: str,
     body: PaymentRejectIn,
@@ -827,18 +933,16 @@ def reject_manual_payment(
     user: User = Depends(require_seller),
     db: Session = Depends(get_db),
 ):
-    """Rechaza el pago: libera el stock reservado y cancela el pedido."""
     payment = _seller_payment(payment_id, store, db)
-    if payment.status not in (PaymentStatus.in_review, PaymentStatus.pending):
+    if payment.status not in (PaymentStatus.in_review, PaymentStatus.pending, PaymentStatus.incomplete):
         raise HTTPException(status.HTTP_409_CONFLICT, "Este pago ya fue revisado")
     order = payment.order
-    payment.status = PaymentStatus.rejected
     payment.review_note = body.note
     payment.reviewed_at = datetime.now(timezone.utc)
     payment.reviewed_by = user.id
-    if order.status not in (OrderStatus.cancelled, OrderStatus.delivered, OrderStatus.returned):
-        restock_order(db, order, note="Reposicion por rechazo de pago")
-        order.status = OrderStatus.cancelled
+    payment_service.transition(
+        db, payment, PaymentStatus.rejected, actor_role="seller", actor_user_id=user.id, note=body.note
+    )
     db.commit()
     db.refresh(payment)
 
@@ -847,5 +951,106 @@ def reject_manual_payment(
         order.buyer.email if order.buyer else None,
         order.id,
         body.note,
+    )
+    return _seller_payment_out(payment)
+
+
+@router.post(
+    "/payments/{payment_id}/reopen",
+    response_model=SellerPaymentOut,
+    status_code=status.HTTP_200_OK,
+    summary="Registrar novedad y reabrir por monto de menos",
+    description=(
+        "Rol permitido: seller. HU-PAG-07. Cuando el comprador transfirio de menos, el vendedor "
+        "registra el monto recibido y la novedad, y reabre la carga de comprobante: el pago pasa a "
+        "`incomplete` (pago_incompleto), el stock sigue reservado y el comprador recibe en su perfil "
+        "y por correo el monto esperado, el recibido, la diferencia y los datos de la cuenta."
+    ),
+    response_description="Pago en pago_incompleto con la carga reabierta.",
+    responses={**PAYMENT_REVIEW_RESPONSES, 400: {"description": "El monto recibido no es menor al total."}},
+)
+def reopen_manual_payment(
+    payment_id: str,
+    body: PaymentIncompleteIn,
+    background: BackgroundTasks,
+    store: Store = Depends(get_seller_store),
+    user: User = Depends(require_seller),
+    db: Session = Depends(get_db),
+):
+    payment = _seller_payment(payment_id, store, db)
+    if payment.status not in (PaymentStatus.in_review, PaymentStatus.pending):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Este pago ya fue revisado")
+    if body.received_amount >= payment.amount:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "El monto recibido debe ser menor al total para reabrir por saldo faltante")
+    order = payment.order
+    difference = payment.amount - body.received_amount
+    payment.received_amount = body.received_amount
+    payment.review_note = body.note
+    payment.reviewed_at = datetime.now(timezone.utc)
+    payment.reviewed_by = user.id
+    # El stock sigue reservado: incomplete no aplica efectos de inventario.
+    payment_service.transition(
+        db, payment, PaymentStatus.incomplete, actor_role="seller", actor_user_id=user.id, note=body.note, received_amount=body.received_amount
+    )
+    db.commit()
+    db.refresh(payment)
+
+    account = _seller_payout_account_out(payment.payout_account) if payment.payout_account else None
+    background.add_task(
+        mailer.payment_incomplete_to_buyer,
+        order.buyer.email if order.buyer else None,
+        order.id,
+        payment.amount,
+        body.received_amount,
+        difference,
+        account,
+    )
+    return _seller_payment_out(payment)
+
+
+@router.post(
+    "/payments/{payment_id}/overpaid",
+    response_model=SellerPaymentOut,
+    status_code=status.HTTP_200_OK,
+    summary="Registrar acuerdo por monto de mas",
+    description=(
+        "Rol permitido: seller. HU-PAG-07. Cuando el comprador pago de mas, el vendedor confirma el "
+        "pago y registra la constancia del acuerdo de devolucion. La devolucion se coordina por fuera "
+        "de la plataforma (no se genera ningun movimiento de dinero); la respuesta incluye los datos "
+        "de contacto del comprador."
+    ),
+    response_description="Pago confirmado con la constancia del acuerdo por monto de mas.",
+    responses=PAYMENT_REVIEW_RESPONSES,
+)
+def overpaid_manual_payment(
+    payment_id: str,
+    body: PaymentOverpaidIn,
+    background: BackgroundTasks,
+    store: Store = Depends(get_seller_store),
+    user: User = Depends(require_seller),
+    db: Session = Depends(get_db),
+):
+    payment = _seller_payment(payment_id, store, db)
+    if payment.status not in (PaymentStatus.in_review, PaymentStatus.pending):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Este pago ya fue revisado")
+    order = payment.order
+    payment.received_amount = body.received_amount
+    payment.review_note = body.note
+    payment.agreement_note = body.note
+    payment.reviewed_at = datetime.now(timezone.utc)
+    payment.reviewed_by = user.id
+    # El acuerdo confirma el pago; la devolucion del excedente se hace por fuera.
+    payment_service.transition(
+        db, payment, PaymentStatus.paid, actor_role="seller", actor_user_id=user.id, note=f"Monto de mas. {body.note}", received_amount=body.received_amount
+    )
+    db.commit()
+    db.refresh(payment)
+
+    amount_text = f"${body.received_amount:,.0f} COP".replace(",", ".")
+    background.add_task(
+        mailer.payment_confirmed_to_buyer,
+        order.buyer.email if order.buyer else None,
+        order.id,
+        amount_text,
     )
     return _seller_payment_out(payment)

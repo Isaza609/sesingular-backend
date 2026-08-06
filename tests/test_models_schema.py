@@ -29,6 +29,7 @@ APP_TABLES = {
     "orders",
     "order_items",
     "payments",
+    "payment_events",
     "shipments",
     "carts",
     "cart_items",

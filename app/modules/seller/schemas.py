@@ -172,14 +172,78 @@ class PayoutAccountPatch(BaseModel):
 
 
 class PaymentConfirmIn(BaseModel):
-    """El vendedor registra el monto realmente recibido al confirmar."""
+    """El vendedor registra el monto realmente recibido al confirmar (HU-PAG-06/07)."""
 
-    received_amount: int = Field(ge=0)
-    note: str | None = Field(default=None, max_length=500)
+    received_amount: int = Field(ge=0, description="Monto realmente recibido en la cuenta.", example=110000)
+    note: str | None = Field(default=None, max_length=500, description="Nota o novedad de la revision.", example="Coincide con el total")
+
+    model_config = ConfigDict(json_schema_extra={"example": {"received_amount": 110000, "note": "Coincide con el total"}})
 
 
 class PaymentRejectIn(BaseModel):
-    note: str = Field(min_length=1, max_length=500)
+    note: str = Field(min_length=1, max_length=500, description="Motivo del rechazo, se informa al comprador.", example="El comprobante no corresponde")
+
+    model_config = ConfigDict(json_schema_extra={"example": {"note": "El comprobante no corresponde"}})
+
+
+class PaymentIncompleteIn(BaseModel):
+    """Novedad por monto de menos: se registra lo recibido y se reabre la carga (HU-PAG-07)."""
+
+    received_amount: int = Field(ge=0, description="Monto recibido, menor al total esperado.", example=90000)
+    note: str = Field(min_length=1, max_length=500, description="Descripcion de la novedad para el comprador.", example="Faltan $20.000 del total")
+
+    model_config = ConfigDict(json_schema_extra={"example": {"received_amount": 90000, "note": "Faltan $20.000 del total"}})
+
+
+class PaymentOverpaidIn(BaseModel):
+    """Novedad por monto de mas: se registra el acuerdo; la devolucion se hace por fuera (HU-PAG-07)."""
+
+    received_amount: int = Field(ge=0, description="Monto recibido, mayor al total esperado.", example=130000)
+    note: str = Field(min_length=1, max_length=500, description="Constancia del acuerdo de devolucion con el comprador.", example="Acordamos devolver $20.000 por transferencia")
+
+    model_config = ConfigDict(json_schema_extra={"example": {"received_amount": 130000, "note": "Acordamos devolver $20.000 por transferencia"}})
+
+
+class PayoutAccountOut(BaseModel):
+    id: str = Field(description="Identificador de la cuenta de cobro.", example="acc-123")
+    store_id: str = Field(description="Tienda propietaria de la cuenta.", example="store-123")
+    type: str = Field(description="Tipo de cuenta: bank o bre_b.", example="bank")
+    label: str | None = Field(default=None, description="Etiqueta visible.", example="Ahorros principal")
+    bank_name: str | None = Field(default=None, description="Banco si es transferencia.", example="Bancolombia")
+    account_type: str | None = Field(default=None, description="Tipo de cuenta bancaria.", example="ahorros")
+    account_number: str | None = Field(default=None, description="Numero de cuenta.", example="12345678901")
+    breb_key: str | None = Field(default=None, description="Llave Bre-B si aplica.", example="nova@breb")
+    holder_name: str = Field(description="Titular de la cuenta.", example="Nova Ropa SAS")
+    holder_document: str | None = Field(default=None, description="Documento del titular.", example="900123456")
+    active: bool = Field(description="Indica si la cuenta esta activa.", example=True)
+
+
+class SellerPaymentContactOut(BaseModel):
+    buyer_name: str | None = Field(default=None, description="Nombre del comprador.", example="Ana Perez")
+    buyer_email: str | None = Field(default=None, description="Correo del comprador para coordinar por fuera.", example="ana@example.com")
+    buyer_phone: str | None = Field(default=None, description="Telefono del comprador si esta registrado.", example="+573001112233")
+
+
+class SellerPaymentOut(BaseModel):
+    id: str = Field(description="Identificador del pago.", example="pay-123")
+    order_id: str = Field(description="Pedido asociado.", example="order-123")
+    status: str = Field(description="Estado del pago: pending, in_review, incomplete, paid, rejected, refunded.", example="in_review")
+    method: str | None = Field(default=None, description="Metodo del pago.", example="transfer")
+    amount: int = Field(description="Monto esperado del pago.", example=110000)
+    currency: str = Field(description="Moneda.", example="COP")
+    buyer_name: str | None = Field(default=None, description="Nombre del comprador.", example="Ana Perez")
+    buyer_email: str | None = Field(default=None, description="Correo del comprador.", example="ana@example.com")
+    buyer_phone: str | None = Field(default=None, description="Telefono del comprador (para acuerdos por fuera).", example="+573001112233")
+    order_status: str = Field(description="Estado del pedido.", example="pending")
+    created_at: datetime = Field(description="Fecha del pedido.", example="2026-08-05T10:00:00Z")
+    receipt_uploaded_at: datetime | None = Field(default=None, description="Fecha de subida del comprobante.", example="2026-08-05T10:05:00Z")
+    receipt_url: str | None = Field(default=None, description="URL firmada del comprobante.", example="https://.../comprobante.pdf")
+    received_amount: int | None = Field(default=None, description="Monto registrado como recibido.", example=90000)
+    difference: int | None = Field(default=None, description="Diferencia esperado - recibido (positivo: faltante).", example=20000)
+    review_note: str | None = Field(default=None, description="Nota/novedad de la revision.", example="Faltan $20.000")
+    agreement_note: str | None = Field(default=None, description="Constancia del acuerdo por monto de mas.", example=None)
+    reviewed_at: datetime | None = Field(default=None, description="Fecha de la ultima revision.", example="2026-08-05T11:00:00Z")
+    payout_account: PayoutAccountOut | None = Field(default=None, description="Cuenta destino usada.")
 
 
 class SellerStoreMemberOut(BaseModel):

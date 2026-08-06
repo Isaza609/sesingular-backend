@@ -432,7 +432,11 @@ def public_stores(db: Session = Depends(get_db)):
     response_model=StorePaymentOptionsOut,
     status_code=status.HTTP_200_OK,
     summary="Consultar opciones de pago",
-    description="Endpoint publico. HU-TDA-03. Muestra solo metodos de pago habilitados por la tienda y disponibles por cuentas activas/configuracion de pasarela.",
+    description=(
+        "Endpoint publico. HU-TDA-03 y HU-PAG-01. Muestra solo los metodos de pago habilitados por "
+        "la tienda (pasarela y/o cobro manual) y, para transferencia/Bre-B, las cuentas de cobro "
+        "activas entre las que el comprador debe elegir en el checkout."
+    ),
     response_description="Metodos y cuentas de cobro disponibles para checkout.",
     responses={
         404: {"description": "Tienda no encontrada o inactiva."},

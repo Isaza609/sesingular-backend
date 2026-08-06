@@ -218,3 +218,36 @@ class DisputeOut(BaseModel):
 class DisputePatch(BaseModel):
     status: Literal["open", "in_review", "resolved", "rejected"]
     resolution_note: str = ""
+
+
+class TransactionEventOut(BaseModel):
+    id: str = Field(description="Identificador del asiento del historial.", example="evt-123")
+    from_status: str | None = Field(default=None, description="Estado anterior (nulo en el primer evento).", example="in_review")
+    to_status: str = Field(description="Estado al que paso la transaccion.", example="paid")
+    actor_role: str | None = Field(default=None, description="Quien origino el cambio: buyer, seller, admin, system o gateway.", example="seller")
+    actor_user_id: str | None = Field(default=None, description="Usuario que origino el cambio, si aplica.", example="seller-123")
+    received_amount: int | None = Field(default=None, description="Monto recibido registrado en el evento, si aplica.", example=110000)
+    note: str | None = Field(default=None, description="Nota o novedad del evento.", example="Coincide con el total")
+    created_at: datetime = Field(description="Fecha del evento.", example="2026-08-05T11:00:00Z")
+
+
+class TransactionOut(BaseModel):
+    id: str = Field(description="Identificador de la transaccion (pago).", example="pay-123")
+    order_id: str = Field(description="Pedido asociado.", example="order-123")
+    store_id: str = Field(description="Tienda asociada.", example="store-123")
+    store_name: str | None = Field(default=None, description="Nombre de la tienda.", example="Nova Ropa")
+    buyer_id: str | None = Field(default=None, description="Comprador asociado.", example="buyer-123")
+    buyer_name: str | None = Field(default=None, description="Nombre del comprador.", example="Ana Perez")
+    provider: str = Field(description="Proveedor: manual, pos, pending o pasarela.", example="manual")
+    method: str | None = Field(default=None, description="Metodo de pago.", example="transfer")
+    status: str = Field(description="Estado vigente de la transaccion.", example="paid")
+    amount: int = Field(description="Monto esperado.", example=110000)
+    received_amount: int | None = Field(default=None, description="Monto recibido registrado.", example=110000)
+    currency: str = Field(description="Moneda.", example="COP")
+    created_at: datetime = Field(description="Fecha de creacion de la transaccion.", example="2026-08-05T10:00:00Z")
+    events: list[TransactionEventOut] = Field(default_factory=list, description="Historial de estados (solo en el detalle).")
+
+
+class TransactionListOut(BaseModel):
+    items: list[TransactionOut] = Field(description="Transacciones que cumplen los filtros.")
+    total: int = Field(description="Cantidad de transacciones devueltas.", example=1)

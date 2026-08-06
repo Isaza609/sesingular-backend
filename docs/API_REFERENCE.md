@@ -39,6 +39,8 @@ Marketplace Singular — API Python
 - [PATCH `/api/v1/admin/moderation/reports/{report_id}`](#patch-apiv1adminmoderationreportsreport-id) — Patch Report
 - [GET `/api/v1/admin/moderation/disputes`](#get-apiv1adminmoderationdisputes) — Moderation Disputes
 - [PATCH `/api/v1/admin/moderation/disputes/{dispute_id}`](#patch-apiv1adminmoderationdisputesdispute-id) — Patch Dispute
+- [GET `/api/v1/admin/transactions`](#get-apiv1admintransactions) — Listar transacciones para conciliacion
+- [GET `/api/v1/admin/transactions/{payment_id}`](#get-apiv1admintransactionspayment-id) — Consultar transaccion con historial
 - [GET `/api/v1/catalog/stores`](#get-apiv1catalogstores) — Listar tiendas
 - [GET `/api/v1/catalog/stores/{store_id}/payment-options`](#get-apiv1catalogstoresstore-idpayment-options) — Consultar opciones de pago
 - [GET `/api/v1/catalog/categories`](#get-apiv1catalogcategories) — Listar categorias publicas
@@ -91,8 +93,8 @@ Marketplace Singular — API Python
 - [GET `/api/v1/orders`](#get-apiv1orders) — Listar pedidos del comprador
 - [GET `/api/v1/orders/{order_id}`](#get-apiv1ordersorder-id) — Consultar pedido del comprador
 - [POST `/api/v1/orders/{order_id}/cancel`](#post-apiv1ordersorder-idcancel) — Cancelar pedido
-- [GET `/api/v1/orders/{order_id}/payment`](#get-apiv1ordersorder-idpayment) — Buyer Order Payment
-- [POST `/api/v1/orders/{order_id}/payment/receipt`](#post-apiv1ordersorder-idpaymentreceipt) — Upload Payment Receipt
+- [GET `/api/v1/orders/{order_id}/payment`](#get-apiv1ordersorder-idpayment) — Consultar estado del pago
+- [POST `/api/v1/orders/{order_id}/payment/receipt`](#post-apiv1ordersorder-idpaymentreceipt) — Subir comprobante de pago
 - [GET `/api/v1/seller/dashboard`](#get-apiv1sellerdashboard) — Seller Dashboard
 - [GET `/api/v1/seller/reports/sales`](#get-apiv1sellerreportssales) — Comparar ventas por canal
 - [GET `/api/v1/seller/store/members`](#get-apiv1sellerstoremembers) — Listar usuarios de mi tienda
@@ -113,15 +115,17 @@ Marketplace Singular — API Python
 - [PATCH `/api/v1/seller/extra-charges/{charge_id}`](#patch-apiv1sellerextra-chargescharge-id) — Actualizar cargo extra
 - [DELETE `/api/v1/seller/extra-charges/{charge_id}`](#delete-apiv1sellerextra-chargescharge-id) — Desactivar cargo extra
 - [GET `/api/v1/seller/customers`](#get-apiv1sellercustomers) — Seller Customers
-- [GET `/api/v1/seller/payout-accounts`](#get-apiv1sellerpayout-accounts) — List Payout Accounts
-- [POST `/api/v1/seller/payout-accounts`](#post-apiv1sellerpayout-accounts) — Create Payout Account
-- [PATCH `/api/v1/seller/payout-accounts/{account_id}`](#patch-apiv1sellerpayout-accountsaccount-id) — Patch Payout Account
-- [DELETE `/api/v1/seller/payout-accounts/{account_id}`](#delete-apiv1sellerpayout-accountsaccount-id) — Deactivate Payout Account
-- [GET `/api/v1/seller/payments`](#get-apiv1sellerpayments) — Seller Payments
-- [POST `/api/v1/seller/payments/{payment_id}/confirm`](#post-apiv1sellerpaymentspayment-idconfirm) — Confirm Manual Payment
-- [POST `/api/v1/seller/payments/{payment_id}/reject`](#post-apiv1sellerpaymentspayment-idreject) — Reject Manual Payment
-- [POST `/api/v1/payments/orders/{order_id}/intent`](#post-apiv1paymentsordersorder-idintent) — Create Payment Intent
-- [POST `/api/v1/payments/webhooks/{provider}`](#post-apiv1paymentswebhooksprovider) — Payment Webhook
+- [GET `/api/v1/seller/payout-accounts`](#get-apiv1sellerpayout-accounts) — Listar cuentas de cobro
+- [POST `/api/v1/seller/payout-accounts`](#post-apiv1sellerpayout-accounts) — Registrar cuenta de cobro
+- [PATCH `/api/v1/seller/payout-accounts/{account_id}`](#patch-apiv1sellerpayout-accountsaccount-id) — Actualizar o reactivar cuenta de cobro
+- [DELETE `/api/v1/seller/payout-accounts/{account_id}`](#delete-apiv1sellerpayout-accountsaccount-id) — Desactivar cuenta de cobro
+- [GET `/api/v1/seller/payments`](#get-apiv1sellerpayments) — Listar pagos por revisar
+- [POST `/api/v1/seller/payments/{payment_id}/confirm`](#post-apiv1sellerpaymentspayment-idconfirm) — Confirmar comprobante
+- [POST `/api/v1/seller/payments/{payment_id}/reject`](#post-apiv1sellerpaymentspayment-idreject) — Rechazar comprobante
+- [POST `/api/v1/seller/payments/{payment_id}/reopen`](#post-apiv1sellerpaymentspayment-idreopen) — Registrar novedad y reabrir por monto de menos
+- [POST `/api/v1/seller/payments/{payment_id}/overpaid`](#post-apiv1sellerpaymentspayment-idoverpaid) — Registrar acuerdo por monto de mas
+- [POST `/api/v1/payments/orders/{order_id}/intent`](#post-apiv1paymentsordersorder-idintent) — Crear intento de pago por pasarela
+- [POST `/api/v1/payments/webhooks/{provider}`](#post-apiv1paymentswebhooksprovider) — Recibir notificacion de la pasarela
 - [GET `/api/v1/catalog/products/{product_id}/reviews`](#get-apiv1catalogproductsproduct-idreviews) — Product Reviews
 - [POST `/api/v1/catalog/products/{product_id}/reviews`](#post-apiv1catalogproductsproduct-idreviews) — Create Review
 - [POST `/api/v1/reviews/{review_id}/report`](#post-apiv1reviewsreview-idreport) — Report Review
@@ -952,6 +956,75 @@ Successful Response
 
 ---
 
+## `GET` `/api/v1/admin/transactions`
+
+**Listar transacciones para conciliacion**
+
+Rol permitido: admin. HU-PAG-09. Lista las transacciones (pasarela y manuales) con su estado y trazabilidad hacia pedido, tienda y metodo de pago, con filtros para conciliar.
+
+**Tags:** admin
+
+### Parámetros de query
+
+| Nombre    | Tipo   | Requerido | Descripción                                                |
+| --------- | ------ | --------- | ---------------------------------------------------------- |
+| status    | string |           | Filtra por estado de la transaccion.                       |
+| store_id  | string |           | Filtra por tienda.                                         |
+| method    | string |           | Filtra por metodo de pago (card, transfer, breb, cash...). |
+| order_id  | string |           | Filtra por pedido.                                         |
+| date_from | string |           | Fecha inicial inclusiva (por created_at).                  |
+| date_to   | string |           | Fecha final inclusiva (por created_at).                    |
+
+### Respuesta `200`
+
+Transacciones que cumplen los filtros.
+
+### Errores posibles
+
+| Código | Situación                                     | Mensaje típico |
+| ------ | --------------------------------------------- | -------------- |
+| 400    | Datos invalidos o regla de negocio violada.   |                |
+| 401    | Token requerido o invalido.                   |                |
+| 403    | Requiere rol admin.                           |                |
+| 404    | Recurso no encontrado.                        |                |
+| 409    | Conflicto con recurso existente.              |                |
+| 422    | Validacion Pydantic.                          |                |
+| 502    | Supabase Auth no disponible o no configurado. |                |
+
+---
+
+## `GET` `/api/v1/admin/transactions/{payment_id}`
+
+**Consultar transaccion con historial**
+
+Rol permitido: admin. HU-PAG-09. Detalle de una transaccion con su historial completo de estados (eventos), conservando los estados anteriores para conciliacion y auditoria.
+
+**Tags:** admin
+
+### Parámetros de ruta
+
+| Nombre     | Tipo   | Requerido | Descripción |
+| ---------- | ------ | --------- | ----------- |
+| payment_id | string | ✓         |             |
+
+### Respuesta `200`
+
+Transaccion con su historial de estados.
+
+### Errores posibles
+
+| Código | Situación                                     | Mensaje típico |
+| ------ | --------------------------------------------- | -------------- |
+| 400    | Datos invalidos o regla de negocio violada.   |                |
+| 401    | Token requerido o invalido.                   |                |
+| 403    | Requiere rol admin.                           |                |
+| 404    | Recurso no encontrado.                        |                |
+| 409    | Conflicto con recurso existente.              |                |
+| 422    | Validacion Pydantic.                          |                |
+| 502    | Supabase Auth no disponible o no configurado. |                |
+
+---
+
 ## `GET` `/api/v1/catalog/stores`
 
 **Listar tiendas**
@@ -976,7 +1049,7 @@ Tiendas activas con datos publicos actualizados.
 
 **Consultar opciones de pago**
 
-Endpoint publico. HU-TDA-03. Muestra solo metodos de pago habilitados por la tienda y disponibles por cuentas activas/configuracion de pasarela.
+Endpoint publico. HU-TDA-03 y HU-PAG-01. Muestra solo los metodos de pago habilitados por la tienda (pasarela y/o cobro manual) y, para transferencia/Bre-B, las cuentas de cobro activas entre las que el comprador debe elegir en el checkout.
 
 **Tags:** catalog
 
@@ -2469,9 +2542,9 @@ Pedido cancelado con inventario conciliado.
 
 ## `GET` `/api/v1/orders/{order_id}/payment`
 
-**Buyer Order Payment**
+**Consultar estado del pago**
 
-Estado del pago, cuenta destino y comprobante ya subido.
+Rol permitido: buyer. HU-PAG-05. Devuelve el estado del pago del pedido, la cuenta destino elegida, el monto exacto a pagar y el comprobante ya subido (URL firmada). Sin comprobante el estado es `pending` (pendiente_pago).
 
 **Tags:** buyer
 
@@ -2483,21 +2556,24 @@ Estado del pago, cuenta destino y comprobante ya subido.
 
 ### Respuesta `200`
 
-Successful Response
+Estado del pago con cuenta destino y comprobante.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                            | Mensaje típico |
+| ------ | ---------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                          |                |
+| 403    | Requiere rol buyer.                                  |                |
+| 404    | Pedido no encontrado dentro del scope del comprador. |                |
+| 422    | Validacion Pydantic.                                 |                |
 
 ---
 
 ## `POST` `/api/v1/orders/{order_id}/payment/receipt`
 
-**Upload Payment Receipt**
+**Subir comprobante de pago**
 
-Sube (o reemplaza) el comprobante y deja el pago en revisión del vendedor.
+Rol permitido: buyer. HU-PAG-05 y HU-PAG-07. Sube (o reemplaza) el comprobante de una transferencia o pago Bre-B en imagen o PDF y deja el pago en revision del vendedor (`in_review` / comprobante_subido). Reabre la revision si el pago venia rechazado o incompleto (pago_incompleto). El stock permanece reservado.
 
 **Tags:** buyer
 
@@ -2511,13 +2587,18 @@ Sube (o reemplaza) el comprobante y deja el pago en revisión del vendedor.
 
 ### Respuesta `200`
 
-Successful Response
+Pago actualizado con el comprobante en revision.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                                         | Mensaje típico |
+| ------ | ----------------------------------------------------------------- | -------------- |
+| 400    | Debe elegirse una cuenta destino valida o el archivo es invalido. |                |
+| 401    | Token requerido o invalido.                                       |                |
+| 403    | Requiere rol buyer.                                               |                |
+| 404    | Pedido o pago no encontrado dentro del scope del comprador.       |                |
+| 409    | El pedido o el pago ya no admite comprobantes.                    |                |
+| 422    | Validacion Pydantic.                                              |                |
 
 ---
 
@@ -3131,19 +3212,38 @@ Successful Response
 
 ## `GET` `/api/v1/seller/payout-accounts`
 
-**List Payout Accounts**
+**Listar cuentas de cobro**
+
+Rol permitido: seller. HU-PAG-03 y HU-PAG-04. Lista las cuentas de cobro manual (banco/Bre-B) de la tienda, activas e inactivas.
 
 **Tags:** seller
 
 ### Respuesta `200`
 
-Successful Response
+Cuentas de cobro de la tienda.
+
+```json
+[
+  {}
+]
+```
+
+### Errores posibles
+
+| Código | Situación                                                   | Mensaje típico |
+| ------ | ----------------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                                 |                |
+| 403    | Requiere rol seller.                                        |                |
+| 404    | Cuenta de cobro no encontrada en la tienda del vendedor.    |                |
+| 422    | Validacion Pydantic (datos incompletos por tipo de cuenta). |                |
 
 ---
 
 ## `POST` `/api/v1/seller/payout-accounts`
 
-**Create Payout Account**
+**Registrar cuenta de cobro**
+
+Rol permitido: seller. HU-PAG-03. Registra una cuenta bancaria o llave Bre-B como medio de cobro manual de la tienda.
 
 **Tags:** seller
 
@@ -3151,19 +3251,24 @@ Successful Response
 
 ### Respuesta `201`
 
-Successful Response
+Cuenta de cobro creada.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                                   | Mensaje típico |
+| ------ | ----------------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                                 |                |
+| 403    | Requiere rol seller.                                        |                |
+| 404    | Cuenta de cobro no encontrada en la tienda del vendedor.    |                |
+| 422    | Validacion Pydantic (datos incompletos por tipo de cuenta). |                |
 
 ---
 
 ## `PATCH` `/api/v1/seller/payout-accounts/{account_id}`
 
-**Patch Payout Account**
+**Actualizar o reactivar cuenta de cobro**
+
+Rol permitido: seller. HU-PAG-04. Actualiza los datos de una cuenta o la reactiva con `active=true`.
 
 **Tags:** seller
 
@@ -3177,21 +3282,24 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Cuenta de cobro actualizada.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                                   | Mensaje típico |
+| ------ | ----------------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                                 |                |
+| 403    | Requiere rol seller.                                        |                |
+| 404    | Cuenta de cobro no encontrada en la tienda del vendedor.    |                |
+| 422    | Validacion Pydantic (datos incompletos por tipo de cuenta). |                |
 
 ---
 
 ## `DELETE` `/api/v1/seller/payout-accounts/{account_id}`
 
-**Deactivate Payout Account**
+**Desactivar cuenta de cobro**
 
-Baja lÃ³gica: conserva la referencia en pedidos ya pagados con esa cuenta.
+Rol permitido: seller. HU-PAG-04. Baja logica: deja de ofrecerse en el checkout pero conserva la referencia en pedidos ya pagados con esa cuenta.
 
 **Tags:** seller
 
@@ -3203,47 +3311,58 @@ Baja lÃ³gica: conserva la referencia en pedidos ya pagados con esa cuenta.
 
 ### Respuesta `200`
 
-Successful Response
+Cuenta de cobro desactivada.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                                   | Mensaje típico |
+| ------ | ----------------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                                 |                |
+| 403    | Requiere rol seller.                                        |                |
+| 404    | Cuenta de cobro no encontrada en la tienda del vendedor.    |                |
+| 422    | Validacion Pydantic (datos incompletos por tipo de cuenta). |                |
 
 ---
 
 ## `GET` `/api/v1/seller/payments`
 
-**Seller Payments**
+**Listar pagos por revisar**
 
-Bandeja de pagos manuales de la tienda (por defecto, los que esperan revisiÃ³n).
+Rol permitido: seller. HU-PAG-06. Bandeja de pagos manuales de la tienda. Por defecto muestra los que esperan revision (`in_review`); acepta `status` para filtrar por cualquier estado, incluido `incomplete` (pago_incompleto).
 
 **Tags:** seller
 
 ### Parámetros de query
 
-| Nombre | Tipo   | Requerido | Descripción |
-| ------ | ------ | --------- | ----------- |
-| status | string |           |             |
+| Nombre | Tipo   | Requerido | Descripción                              |
+| ------ | ------ | --------- | ---------------------------------------- |
+| status | string |           | Estado a filtrar; por defecto in_review. |
 
 ### Respuesta `200`
 
-Successful Response
+Pagos manuales de la tienda segun el filtro.
+
+```json
+[
+  {}
+]
+```
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                   | Mensaje típico |
+| ------ | --------------------------- | -------------- |
+| 401    | Token requerido o invalido. |                |
+| 403    | Requiere rol seller.        |                |
+| 422    | Validacion Pydantic.        |                |
 
 ---
 
 ## `POST` `/api/v1/seller/payments/{payment_id}/confirm`
 
-**Confirm Manual Payment**
+**Confirmar comprobante**
 
-El vendedor confirma que el dinero llegÃ³, registrando el monto recibido.
+Rol permitido: seller. HU-PAG-06 y HU-PAG-07. Confirma que el dinero llego registrando el monto recibido; el pago pasa a `paid` (pago_confirmado) y el pedido avanza a confirmado.
 
 **Tags:** seller
 
@@ -3257,21 +3376,25 @@ El vendedor confirma que el dinero llegÃ³, registrando el monto recibido.
 
 ### Respuesta `200`
 
-Successful Response
+Pago confirmado.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                        | Mensaje típico |
+| ------ | ------------------------------------------------ | -------------- |
+| 401    | Token requerido o invalido.                      |                |
+| 403    | Requiere rol seller.                             |                |
+| 404    | Pago no encontrado en la tienda del vendedor.    |                |
+| 409    | El pago ya fue revisado o no admite esta accion. |                |
+| 422    | Validacion Pydantic.                             |                |
 
 ---
 
 ## `POST` `/api/v1/seller/payments/{payment_id}/reject`
 
-**Reject Manual Payment**
+**Rechazar comprobante**
 
-Rechaza el pago: libera el stock reservado y cancela el pedido.
+Rol permitido: seller. HU-PAG-06. Rechaza el pago: pasa a `rejected` (pago_rechazado), libera el stock reservado, cancela el pedido y notifica al comprador con el motivo.
 
 **Tags:** seller
 
@@ -3285,19 +3408,90 @@ Rechaza el pago: libera el stock reservado y cancela el pedido.
 
 ### Respuesta `200`
 
-Successful Response
+Pago rechazado.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                        | Mensaje típico |
+| ------ | ------------------------------------------------ | -------------- |
+| 401    | Token requerido o invalido.                      |                |
+| 403    | Requiere rol seller.                             |                |
+| 404    | Pago no encontrado en la tienda del vendedor.    |                |
+| 409    | El pago ya fue revisado o no admite esta accion. |                |
+| 422    | Validacion Pydantic.                             |                |
+
+---
+
+## `POST` `/api/v1/seller/payments/{payment_id}/reopen`
+
+**Registrar novedad y reabrir por monto de menos**
+
+Rol permitido: seller. HU-PAG-07. Cuando el comprador transfirio de menos, el vendedor registra el monto recibido y la novedad, y reabre la carga de comprobante: el pago pasa a `incomplete` (pago_incompleto), el stock sigue reservado y el comprador recibe en su perfil y por correo el monto esperado, el recibido, la diferencia y los datos de la cuenta.
+
+**Tags:** seller
+
+### Parámetros de ruta
+
+| Nombre     | Tipo   | Requerido | Descripción |
+| ---------- | ------ | --------- | ----------- |
+| payment_id | string | ✓         |             |
+
+### Request body
+
+### Respuesta `200`
+
+Pago en pago_incompleto con la carga reabierta.
+
+### Errores posibles
+
+| Código | Situación                                        | Mensaje típico |
+| ------ | ------------------------------------------------ | -------------- |
+| 401    | Token requerido o invalido.                      |                |
+| 403    | Requiere rol seller.                             |                |
+| 404    | Pago no encontrado en la tienda del vendedor.    |                |
+| 409    | El pago ya fue revisado o no admite esta accion. |                |
+| 422    | Validacion Pydantic.                             |                |
+| 400    | El monto recibido no es menor al total.          |                |
+
+---
+
+## `POST` `/api/v1/seller/payments/{payment_id}/overpaid`
+
+**Registrar acuerdo por monto de mas**
+
+Rol permitido: seller. HU-PAG-07. Cuando el comprador pago de mas, el vendedor confirma el pago y registra la constancia del acuerdo de devolucion. La devolucion se coordina por fuera de la plataforma (no se genera ningun movimiento de dinero); la respuesta incluye los datos de contacto del comprador.
+
+**Tags:** seller
+
+### Parámetros de ruta
+
+| Nombre     | Tipo   | Requerido | Descripción |
+| ---------- | ------ | --------- | ----------- |
+| payment_id | string | ✓         |             |
+
+### Request body
+
+### Respuesta `200`
+
+Pago confirmado con la constancia del acuerdo por monto de mas.
+
+### Errores posibles
+
+| Código | Situación                                        | Mensaje típico |
+| ------ | ------------------------------------------------ | -------------- |
+| 401    | Token requerido o invalido.                      |                |
+| 403    | Requiere rol seller.                             |                |
+| 404    | Pago no encontrado en la tienda del vendedor.    |                |
+| 409    | El pago ya fue revisado o no admite esta accion. |                |
+| 422    | Validacion Pydantic.                             |                |
 
 ---
 
 ## `POST` `/api/v1/payments/orders/{order_id}/intent`
 
-**Create Payment Intent**
+**Crear intento de pago por pasarela**
+
+Rol permitido: buyer. HU-PAG-02. Crea (o reutiliza) el pago pendiente del pedido para cobrarlo por la pasarela automatizada configurada por la plataforma y registra la transaccion (HU-PAG-09).
 
 **Tags:** payments
 
@@ -3313,21 +3507,27 @@ Successful Response
 | -------------- | ------ | --------- | ----------- |
 | payment_method | string |           |             |
 
-### Respuesta `200`
+### Respuesta `201`
 
-Successful Response
+Intento de pago con proveedor y monto a cobrar.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                            | Mensaje típico |
+| ------ | ---------------------------------------------------- | -------------- |
+| 401    | Token requerido o invalido.                          |                |
+| 403    | Requiere rol buyer.                                  |                |
+| 404    | Pedido no encontrado dentro del scope del comprador. |                |
+| 409    | El pedido esta cancelado.                            |                |
+| 422    | Validacion Pydantic.                                 |                |
 
 ---
 
 ## `POST` `/api/v1/payments/webhooks/{provider}`
 
-**Payment Webhook**
+**Recibir notificacion de la pasarela**
+
+Endpoint de integracion (pasarela). HU-PAG-02 y HU-PAG-09. Aplica el resultado del pago notificado por la pasarela: aprobado confirma el pedido; rechazado o reembolsado repone el stock y cancela el pedido. Valida la firma del webhook contra la configurada por el admin.
 
 **Tags:** payments
 
@@ -3341,13 +3541,16 @@ Successful Response
 
 ### Respuesta `200`
 
-Successful Response
+Pago afectado con su nuevo estado.
 
 ### Errores posibles
 
-| Código | Situación        | Mensaje típico |
-| ------ | ---------------- | -------------- |
-| 422    | Validation Error |                |
+| Código | Situación                                                | Mensaje típico |
+| ------ | -------------------------------------------------------- | -------------- |
+| 400    | Estado de pago no soportado o falta identificar el pago. |                |
+| 401    | Firma de webhook invalida.                               |                |
+| 404    | Pago no encontrado.                                      |                |
+| 422    | Validacion Pydantic.                                     |                |
 
 ---
 

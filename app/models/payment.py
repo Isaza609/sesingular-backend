@@ -12,6 +12,7 @@ from app.db.base import Base, SCHEMA
 class PaymentStatus(str, enum.Enum):
     pending = "pending"          # pendiente_pago: aún sin comprobante
     in_review = "in_review"      # comprobante_subido: esperando revisión del vendedor
+    incomplete = "incomplete"    # pago_incompleto: monto recibido de menos, carga reabierta (HU-PAG-07)
     paid = "paid"                # pago_confirmado
     rejected = "rejected"        # pago_rechazado
     refunded = "refunded"
@@ -49,6 +50,9 @@ class Payment(Base):
     review_note: Mapped[str | None] = mapped_column(Text)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_by: Mapped[str | None] = mapped_column(String(36))
+    # Constancia del acuerdo cuando el comprador pagó de más (HU-PAG-07). La devolución
+    # se acuerda por fuera de la plataforma: aquí solo queda el registro del acuerdo.
+    agreement_note: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -57,3 +61,34 @@ class Payment(Base):
 
     order = relationship("Order", back_populates="payments")
     payout_account = relationship("PayoutAccount")
+    events = relationship(
+        "PaymentEvent",
+        back_populates="payment",
+        cascade="all, delete-orphan",
+        order_by="PaymentEvent.created_at",
+    )
+
+
+class PaymentEvent(Base):
+    """Historial de estados de una transacción (HU-PAG-09).
+
+    Cada transición de estado inserta un evento y conserva el estado anterior, para
+    que el administrador pueda conciliar y auditar. `Payment.status` es el estado
+    vigente; esta tabla es la bitácora inmutable de cómo llegó ahí.
+    """
+
+    __tablename__ = "payment_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    payment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey(f"{SCHEMA}.payments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    from_status: Mapped[str | None] = mapped_column(String(20))
+    to_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_role: Mapped[str | None] = mapped_column(String(20))  # buyer | seller | admin | system | gateway
+    actor_user_id: Mapped[str | None] = mapped_column(String(36))
+    received_amount: Mapped[int | None] = mapped_column(Integer)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    payment = relationship("Payment", back_populates="events")

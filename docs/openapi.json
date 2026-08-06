@@ -1773,6 +1773,226 @@
         }
       }
     },
+    "/api/v1/admin/transactions": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Listar transacciones para conciliacion",
+        "description": "Rol permitido: admin. HU-PAG-09. Lista las transacciones (pasarela y manuales) con su estado y trazabilidad hacia pedido, tienda y metodo de pago, con filtros para conciliar.",
+        "operationId": "list_transactions_api_v1_admin_transactions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(pending|in_review|incomplete|paid|rejected|refunded)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filtra por estado de la transaccion.",
+              "title": "Status"
+            },
+            "description": "Filtra por estado de la transaccion."
+          },
+          {
+            "name": "store_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filtra por tienda.",
+              "title": "Store Id"
+            },
+            "description": "Filtra por tienda."
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filtra por metodo de pago (card, transfer, breb, cash...).",
+              "title": "Method"
+            },
+            "description": "Filtra por metodo de pago (card, transfer, breb, cash...)."
+          },
+          {
+            "name": "order_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filtra por pedido.",
+              "title": "Order Id"
+            },
+            "description": "Filtra por pedido."
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fecha inicial inclusiva (por created_at).",
+              "title": "Date From"
+            },
+            "description": "Fecha inicial inclusiva (por created_at)."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Fecha final inclusiva (por created_at).",
+              "title": "Date To"
+            },
+            "description": "Fecha final inclusiva (por created_at)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transacciones que cumplen los filtros.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionListOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Datos invalidos o regla de negocio violada."
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol admin."
+          },
+          "404": {
+            "description": "Recurso no encontrado."
+          },
+          "409": {
+            "description": "Conflicto con recurso existente."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          },
+          "502": {
+            "description": "Supabase Auth no disponible o no configurado."
+          }
+        }
+      }
+    },
+    "/api/v1/admin/transactions/{payment_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Consultar transaccion con historial",
+        "description": "Rol permitido: admin. HU-PAG-09. Detalle de una transaccion con su historial completo de estados (eventos), conservando los estados anteriores para conciliacion y auditoria.",
+        "operationId": "get_transaction_api_v1_admin_transactions__payment_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Payment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaccion con su historial de estados.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Datos invalidos o regla de negocio violada."
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol admin."
+          },
+          "404": {
+            "description": "Recurso no encontrado."
+          },
+          "409": {
+            "description": "Conflicto con recurso existente."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          },
+          "502": {
+            "description": "Supabase Auth no disponible o no configurado."
+          }
+        }
+      }
+    },
     "/api/v1/catalog/stores": {
       "get": {
         "tags": [
@@ -1804,7 +2024,7 @@
           "catalog"
         ],
         "summary": "Consultar opciones de pago",
-        "description": "Endpoint publico. HU-TDA-03. Muestra solo metodos de pago habilitados por la tienda y disponibles por cuentas activas/configuracion de pasarela.",
+        "description": "Endpoint publico. HU-TDA-03 y HU-PAG-01. Muestra solo los metodos de pago habilitados por la tienda (pasarela y/o cobro manual) y, para transferencia/Bre-B, las cuentas de cobro activas entre las que el comprador debe elegir en el checkout.",
         "operationId": "public_store_payment_options_api_v1_catalog_stores__store_id__payment_options_get",
         "parameters": [
           {
@@ -4752,8 +4972,8 @@
         "tags": [
           "buyer"
         ],
-        "summary": "Buyer Order Payment",
-        "description": "Estado del pago, cuenta destino y comprobante ya subido.",
+        "summary": "Consultar estado del pago",
+        "description": "Rol permitido: buyer. HU-PAG-05. Devuelve el estado del pago del pedido, la cuenta destino elegida, el monto exacto a pagar y el comprobante ya subido (URL firmada). Sin comprobante el estado es `pending` (pendiente_pago).",
         "operationId": "buyer_order_payment_api_v1_orders__order_id__payment_get",
         "security": [
           {
@@ -4773,22 +4993,26 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+            "description": "Estado del pago con cuenta destino y comprobante.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/PaymentOut"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol buyer."
+          },
+          "404": {
+            "description": "Pedido no encontrado dentro del scope del comprador."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
           }
         }
       }
@@ -4798,8 +5022,8 @@
         "tags": [
           "buyer"
         ],
-        "summary": "Upload Payment Receipt",
-        "description": "Sube (o reemplaza) el comprobante y deja el pago en revisión del vendedor.",
+        "summary": "Subir comprobante de pago",
+        "description": "Rol permitido: buyer. HU-PAG-05 y HU-PAG-07. Sube (o reemplaza) el comprobante de una transferencia o pago Bre-B en imagen o PDF y deja el pago en revision del vendedor (`in_review` / comprobante_subido). Reabre la revision si el pago venia rechazado o incompleto (pago_incompleto). El stock permanece reservado.",
         "operationId": "upload_payment_receipt_api_v1_orders__order_id__payment_receipt_post",
         "security": [
           {
@@ -4829,22 +5053,32 @@
         },
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+            "description": "Pago actualizado con el comprobante en revision.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/PaymentOut"
                 }
               }
             }
+          },
+          "400": {
+            "description": "Debe elegirse una cuenta destino valida o el archivo es invalido."
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol buyer."
+          },
+          "404": {
+            "description": "Pedido o pago no encontrado dentro del scope del comprador."
+          },
+          "409": {
+            "description": "El pedido o el pago ya no admite comprobantes."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
           }
         }
       }
@@ -6054,16 +6288,35 @@
         "tags": [
           "seller"
         ],
-        "summary": "List Payout Accounts",
+        "summary": "Listar cuentas de cobro",
+        "description": "Rol permitido: seller. HU-PAG-03 y HU-PAG-04. Lista las cuentas de cobro manual (banco/Bre-B) de la tienda, activas e inactivas.",
         "operationId": "list_payout_accounts_api_v1_seller_payout_accounts_get",
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Cuentas de cobro de la tienda.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PayoutAccountOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Payout Accounts Api V1 Seller Payout Accounts Get"
+                }
               }
             }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Cuenta de cobro no encontrada en la tienda del vendedor."
+          },
+          "422": {
+            "description": "Validacion Pydantic (datos incompletos por tipo de cuenta)."
           }
         },
         "security": [
@@ -6076,7 +6329,8 @@
         "tags": [
           "seller"
         ],
-        "summary": "Create Payout Account",
+        "summary": "Registrar cuenta de cobro",
+        "description": "Rol permitido: seller. HU-PAG-03. Registra una cuenta bancaria o llave Bre-B como medio de cobro manual de la tienda.",
         "operationId": "create_payout_account_api_v1_seller_payout_accounts_post",
         "requestBody": {
           "content": {
@@ -6090,22 +6344,26 @@
         },
         "responses": {
           "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+            "description": "Cuenta de cobro creada.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/PayoutAccountOut"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Cuenta de cobro no encontrada en la tienda del vendedor."
+          },
+          "422": {
+            "description": "Validacion Pydantic (datos incompletos por tipo de cuenta)."
           }
         },
         "security": [
@@ -6120,7 +6378,8 @@
         "tags": [
           "seller"
         ],
-        "summary": "Patch Payout Account",
+        "summary": "Actualizar o reactivar cuenta de cobro",
+        "description": "Rol permitido: seller. HU-PAG-04. Actualiza los datos de una cuenta o la reactiva con `active=true`.",
         "operationId": "patch_payout_account_api_v1_seller_payout_accounts__account_id__patch",
         "security": [
           {
@@ -6150,22 +6409,26 @@
         },
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+            "description": "Cuenta de cobro actualizada.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/PayoutAccountOut"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Cuenta de cobro no encontrada en la tienda del vendedor."
+          },
+          "422": {
+            "description": "Validacion Pydantic (datos incompletos por tipo de cuenta)."
           }
         }
       },
@@ -6173,8 +6436,8 @@
         "tags": [
           "seller"
         ],
-        "summary": "Deactivate Payout Account",
-        "description": "Baja lÃ³gica: conserva la referencia en pedidos ya pagados con esa cuenta.",
+        "summary": "Desactivar cuenta de cobro",
+        "description": "Rol permitido: seller. HU-PAG-04. Baja logica: deja de ofrecerse en el checkout pero conserva la referencia en pedidos ya pagados con esa cuenta.",
         "operationId": "deactivate_payout_account_api_v1_seller_payout_accounts__account_id__delete",
         "security": [
           {
@@ -6194,22 +6457,26 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+            "description": "Cuenta de cobro desactivada.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/PayoutAccountOut"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Cuenta de cobro no encontrada en la tienda del vendedor."
+          },
+          "422": {
+            "description": "Validacion Pydantic (datos incompletos por tipo de cuenta)."
           }
         }
       }
@@ -6219,8 +6486,8 @@
         "tags": [
           "seller"
         ],
-        "summary": "Seller Payments",
-        "description": "Bandeja de pagos manuales de la tienda (por defecto, los que esperan revisiÃ³n).",
+        "summary": "Listar pagos por revisar",
+        "description": "Rol permitido: seller. HU-PAG-06. Bandeja de pagos manuales de la tienda. Por defecto muestra los que esperan revision (`in_review`); acepta `status` para filtrar por cualquier estado, incluido `incomplete` (pago_incompleto).",
         "operationId": "seller_payments_api_v1_seller_payments_get",
         "security": [
           {
@@ -6236,34 +6503,41 @@
               "anyOf": [
                 {
                   "type": "string",
-                  "pattern": "^(pending|in_review|paid|rejected|refunded)$"
+                  "pattern": "^(pending|in_review|incomplete|paid|rejected|refunded)$"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "description": "Estado a filtrar; por defecto in_review.",
               "title": "Status"
-            }
+            },
+            "description": "Estado a filtrar; por defecto in_review."
           }
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+            "description": "Pagos manuales de la tienda segun el filtro.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SellerPaymentOut"
+                  },
+                  "title": "Response Seller Payments Api V1 Seller Payments Get"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
           }
         }
       }
@@ -6273,8 +6547,8 @@
         "tags": [
           "seller"
         ],
-        "summary": "Confirm Manual Payment",
-        "description": "El vendedor confirma que el dinero llegÃ³, registrando el monto recibido.",
+        "summary": "Confirmar comprobante",
+        "description": "Rol permitido: seller. HU-PAG-06 y HU-PAG-07. Confirma que el dinero llego registrando el monto recibido; el pago pasa a `paid` (pago_confirmado) y el pedido avanza a confirmado.",
         "operationId": "confirm_manual_payment_api_v1_seller_payments__payment_id__confirm_post",
         "security": [
           {
@@ -6304,22 +6578,29 @@
         },
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+            "description": "Pago confirmado.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/SellerPaymentOut"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Pago no encontrado en la tienda del vendedor."
+          },
+          "409": {
+            "description": "El pago ya fue revisado o no admite esta accion."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
           }
         }
       }
@@ -6329,8 +6610,8 @@
         "tags": [
           "seller"
         ],
-        "summary": "Reject Manual Payment",
-        "description": "Rechaza el pago: libera el stock reservado y cancela el pedido.",
+        "summary": "Rechazar comprobante",
+        "description": "Rol permitido: seller. HU-PAG-06. Rechaza el pago: pasa a `rejected` (pago_rechazado), libera el stock reservado, cancela el pedido y notifica al comprador con el motivo.",
         "operationId": "reject_manual_payment_api_v1_seller_payments__payment_id__reject_post",
         "security": [
           {
@@ -6360,22 +6641,158 @@
         },
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+            "description": "Pago rechazado.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/SellerPaymentOut"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Pago no encontrado en la tienda del vendedor."
+          },
+          "409": {
+            "description": "El pago ya fue revisado o no admite esta accion."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          }
+        }
+      }
+    },
+    "/api/v1/seller/payments/{payment_id}/reopen": {
+      "post": {
+        "tags": [
+          "seller"
+        ],
+        "summary": "Registrar novedad y reabrir por monto de menos",
+        "description": "Rol permitido: seller. HU-PAG-07. Cuando el comprador transfirio de menos, el vendedor registra el monto recibido y la novedad, y reabre la carga de comprobante: el pago pasa a `incomplete` (pago_incompleto), el stock sigue reservado y el comprador recibe en su perfil y por correo el monto esperado, el recibido, la diferencia y los datos de la cuenta.",
+        "operationId": "reopen_manual_payment_api_v1_seller_payments__payment_id__reopen_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Payment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentIncompleteIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pago en pago_incompleto con la carga reabierta.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SellerPaymentOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Pago no encontrado en la tienda del vendedor."
+          },
+          "409": {
+            "description": "El pago ya fue revisado o no admite esta accion."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
+          },
+          "400": {
+            "description": "El monto recibido no es menor al total."
+          }
+        }
+      }
+    },
+    "/api/v1/seller/payments/{payment_id}/overpaid": {
+      "post": {
+        "tags": [
+          "seller"
+        ],
+        "summary": "Registrar acuerdo por monto de mas",
+        "description": "Rol permitido: seller. HU-PAG-07. Cuando el comprador pago de mas, el vendedor confirma el pago y registra la constancia del acuerdo de devolucion. La devolucion se coordina por fuera de la plataforma (no se genera ningun movimiento de dinero); la respuesta incluye los datos de contacto del comprador.",
+        "operationId": "overpaid_manual_payment_api_v1_seller_payments__payment_id__overpaid_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Payment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentOverpaidIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pago confirmado con la constancia del acuerdo por monto de mas.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SellerPaymentOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol seller."
+          },
+          "404": {
+            "description": "Pago no encontrado en la tienda del vendedor."
+          },
+          "409": {
+            "description": "El pago ya fue revisado o no admite esta accion."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
           }
         }
       }
@@ -6385,7 +6802,8 @@
         "tags": [
           "payments"
         ],
-        "summary": "Create Payment Intent",
+        "summary": "Crear intento de pago por pasarela",
+        "description": "Rol permitido: buyer. HU-PAG-02. Crea (o reutiliza) el pago pendiente del pedido para cobrarlo por la pasarela automatizada configurada por la plataforma y registra la transaccion (HU-PAG-09).",
         "operationId": "create_payment_intent_api_v1_payments_orders__order_id__intent_post",
         "security": [
           {
@@ -6414,23 +6832,30 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+          "201": {
+            "description": "Intento de pago con proveedor y monto a cobrar.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/PaymentIntentOut"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Token requerido o invalido."
+          },
+          "403": {
+            "description": "Requiere rol buyer."
+          },
+          "404": {
+            "description": "Pedido no encontrado dentro del scope del comprador."
+          },
+          "409": {
+            "description": "El pedido esta cancelado."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
           }
         }
       }
@@ -6440,7 +6865,8 @@
         "tags": [
           "payments"
         ],
-        "summary": "Payment Webhook",
+        "summary": "Recibir notificacion de la pasarela",
+        "description": "Endpoint de integracion (pasarela). HU-PAG-02 y HU-PAG-09. Aplica el resultado del pago notificado por la pasarela: aprobado confirma el pedido; rechazado o reembolsado repone el stock y cancela el pedido. Valida la firma del webhook contra la configurada por el admin.",
         "operationId": "payment_webhook_api_v1_payments_webhooks__provider__post",
         "parameters": [
           {
@@ -6474,31 +6900,33 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Body"
+                "$ref": "#/components/schemas/WebhookIn"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
+            "description": "Pago afectado con su nuevo estado.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/WebhookResultOut"
                 }
               }
             }
+          },
+          "400": {
+            "description": "Estado de pago no soportado o falta identificar el pago."
+          },
+          "401": {
+            "description": "Firma de webhook invalida."
+          },
+          "404": {
+            "description": "Pago no encontrado."
+          },
+          "422": {
+            "description": "Validacion Pydantic."
           }
         }
       }
@@ -7201,7 +7629,8 @@
           "file": {
             "type": "string",
             "contentMediaType": "application/octet-stream",
-            "title": "File"
+            "title": "File",
+            "description": "Comprobante en JPG, PNG o PDF (max 5 MB)."
           },
           "payout_account_id": {
             "anyOf": [
@@ -7212,7 +7641,8 @@
                 "type": "null"
               }
             ],
-            "title": "Payout Account Id"
+            "title": "Payout Account Id",
+            "description": "Cuenta destino elegida; obligatoria si aun no se fijo."
           }
         },
         "type": "object",
@@ -10011,7 +10441,9 @@
           "received_amount": {
             "type": "integer",
             "minimum": 0.0,
-            "title": "Received Amount"
+            "title": "Received Amount",
+            "description": "Monto realmente recibido en la cuenta.",
+            "example": 110000
           },
           "note": {
             "anyOf": [
@@ -10023,7 +10455,9 @@
                 "type": "null"
               }
             ],
-            "title": "Note"
+            "title": "Note",
+            "description": "Nota o novedad de la revision.",
+            "example": "Coincide con el total"
           }
         },
         "type": "object",
@@ -10031,7 +10465,111 @@
           "received_amount"
         ],
         "title": "PaymentConfirmIn",
-        "description": "El vendedor registra el monto realmente recibido al confirmar."
+        "description": "El vendedor registra el monto realmente recibido al confirmar (HU-PAG-06/07).",
+        "example": {
+          "note": "Coincide con el total",
+          "received_amount": 110000
+        }
+      },
+      "PaymentIncompleteIn": {
+        "properties": {
+          "received_amount": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Received Amount",
+            "description": "Monto recibido, menor al total esperado.",
+            "example": 90000
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Note",
+            "description": "Descripcion de la novedad para el comprador.",
+            "example": "Faltan $20.000 del total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "received_amount",
+          "note"
+        ],
+        "title": "PaymentIncompleteIn",
+        "description": "Novedad por monto de menos: se registra lo recibido y se reabre la carga (HU-PAG-07).",
+        "example": {
+          "note": "Faltan $20.000 del total",
+          "received_amount": 90000
+        }
+      },
+      "PaymentIntentOut": {
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "title": "Payment Id",
+            "description": "Identificador del pago creado o reutilizado.",
+            "example": "pay-123"
+          },
+          "order_id": {
+            "type": "string",
+            "title": "Order Id",
+            "description": "Pedido asociado al intento de pago.",
+            "example": "order-123"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "Proveedor de pasarela configurado en la plataforma.",
+            "example": "mercadopago"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Estado actual del pago.",
+            "example": "pending"
+          },
+          "amount": {
+            "type": "integer",
+            "title": "Amount",
+            "description": "Monto a cobrar por la pasarela.",
+            "example": 110000
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "description": "Moneda del cobro.",
+            "example": "COP"
+          },
+          "checkout_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkout Url",
+            "description": "URL de checkout de la pasarela si aplica."
+          }
+        },
+        "type": "object",
+        "required": [
+          "payment_id",
+          "order_id",
+          "provider",
+          "status",
+          "amount",
+          "currency"
+        ],
+        "title": "PaymentIntentOut",
+        "example": {
+          "amount": 110000,
+          "currency": "COP",
+          "order_id": "order-123",
+          "payment_id": "pay-123",
+          "provider": "mercadopago",
+          "status": "pending"
+        }
       },
       "PaymentMethodsConfig": {
         "properties": {
@@ -10065,20 +10603,337 @@
           "manual_transfer_enabled": true
         }
       },
+      "PaymentOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Identificador del pago.",
+            "example": "pay-123"
+          },
+          "order_id": {
+            "type": "string",
+            "title": "Order Id",
+            "description": "Pedido al que pertenece el pago.",
+            "example": "order-123"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method",
+            "description": "Metodo elegido: card, transfer, breb, etc.",
+            "example": "transfer"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "Proveedor: manual, pending o pasarela.",
+            "example": "manual"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Estado del pago: pending, in_review, incomplete, paid, rejected, refunded.",
+            "example": "in_review"
+          },
+          "amount": {
+            "type": "integer",
+            "title": "Amount",
+            "description": "Monto esperado del pago en la moneda del pedido.",
+            "example": 110000
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "description": "Moneda del pago.",
+            "example": "COP"
+          },
+          "is_manual": {
+            "type": "boolean",
+            "title": "Is Manual",
+            "description": "Indica si el pago es manual (transferencia/Bre-B).",
+            "example": true
+          },
+          "payout_account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentPayoutAccountOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cuenta destino elegida para el pago manual."
+          },
+          "has_receipt": {
+            "type": "boolean",
+            "title": "Has Receipt",
+            "description": "Indica si ya hay un comprobante cargado.",
+            "example": true
+          },
+          "receipt_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Url",
+            "description": "URL firmada temporal del comprobante (solo en el detalle).",
+            "example": "https://.../comprobante.pdf"
+          },
+          "receipt_uploaded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Uploaded At",
+            "description": "Fecha de subida del comprobante.",
+            "example": "2026-08-05T10:05:00Z"
+          },
+          "received_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Amount",
+            "description": "Monto que el vendedor registro como recibido.",
+            "example": 90000
+          },
+          "difference": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difference",
+            "description": "Diferencia esperado - recibido cuando hay novedad (positivo: faltante).",
+            "example": 20000
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note",
+            "description": "Nota de la revision o novedad del vendedor.",
+            "example": "Faltan $20.000"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At",
+            "description": "Fecha de la ultima revision.",
+            "example": "2026-08-05T11:00:00Z"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "order_id",
+          "provider",
+          "status",
+          "amount",
+          "currency",
+          "is_manual",
+          "has_receipt"
+        ],
+        "title": "PaymentOut"
+      },
+      "PaymentOverpaidIn": {
+        "properties": {
+          "received_amount": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Received Amount",
+            "description": "Monto recibido, mayor al total esperado.",
+            "example": 130000
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Note",
+            "description": "Constancia del acuerdo de devolucion con el comprador.",
+            "example": "Acordamos devolver $20.000 por transferencia"
+          }
+        },
+        "type": "object",
+        "required": [
+          "received_amount",
+          "note"
+        ],
+        "title": "PaymentOverpaidIn",
+        "description": "Novedad por monto de mas: se registra el acuerdo; la devolucion se hace por fuera (HU-PAG-07).",
+        "example": {
+          "note": "Acordamos devolver $20.000 por transferencia",
+          "received_amount": 130000
+        }
+      },
+      "PaymentPayoutAccountOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Identificador de la cuenta de cobro destino.",
+            "example": "acc-123"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "Tipo de cuenta: bank o bre_b.",
+            "example": "bank"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Etiqueta visible de la cuenta.",
+            "example": "Ahorros principal"
+          },
+          "bank_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Name",
+            "description": "Banco (si es transferencia).",
+            "example": "Bancolombia"
+          },
+          "account_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Type",
+            "description": "Tipo de cuenta bancaria.",
+            "example": "ahorros"
+          },
+          "account_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Number",
+            "description": "Numero de cuenta.",
+            "example": "12345678901"
+          },
+          "breb_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breb Key",
+            "description": "Llave Bre-B (si aplica).",
+            "example": "nova@breb"
+          },
+          "holder_name": {
+            "type": "string",
+            "title": "Holder Name",
+            "description": "Titular de la cuenta.",
+            "example": "Nova Ropa SAS"
+          },
+          "holder_document": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Holder Document",
+            "description": "Documento del titular.",
+            "example": "900123456"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "Indica si la cuenta sigue activa.",
+            "example": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "holder_name",
+          "active"
+        ],
+        "title": "PaymentPayoutAccountOut"
+      },
       "PaymentRejectIn": {
         "properties": {
           "note": {
             "type": "string",
             "maxLength": 500,
             "minLength": 1,
-            "title": "Note"
+            "title": "Note",
+            "description": "Motivo del rechazo, se informa al comprador.",
+            "example": "El comprobante no corresponde"
           }
         },
         "type": "object",
         "required": [
           "note"
         ],
-        "title": "PaymentRejectIn"
+        "title": "PaymentRejectIn",
+        "example": {
+          "note": "El comprobante no corresponde"
+        }
       },
       "PayoutAccountIn": {
         "properties": {
@@ -10178,6 +11033,127 @@
         ],
         "title": "PayoutAccountIn",
         "description": "Cuenta de cobro manual del vendedor: transferencia bancaria o Bre-B."
+      },
+      "PayoutAccountOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Identificador de la cuenta de cobro.",
+            "example": "acc-123"
+          },
+          "store_id": {
+            "type": "string",
+            "title": "Store Id",
+            "description": "Tienda propietaria de la cuenta.",
+            "example": "store-123"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "Tipo de cuenta: bank o bre_b.",
+            "example": "bank"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Etiqueta visible.",
+            "example": "Ahorros principal"
+          },
+          "bank_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Name",
+            "description": "Banco si es transferencia.",
+            "example": "Bancolombia"
+          },
+          "account_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Type",
+            "description": "Tipo de cuenta bancaria.",
+            "example": "ahorros"
+          },
+          "account_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Number",
+            "description": "Numero de cuenta.",
+            "example": "12345678901"
+          },
+          "breb_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breb Key",
+            "description": "Llave Bre-B si aplica.",
+            "example": "nova@breb"
+          },
+          "holder_name": {
+            "type": "string",
+            "title": "Holder Name",
+            "description": "Titular de la cuenta.",
+            "example": "Nova Ropa SAS"
+          },
+          "holder_document": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Holder Document",
+            "description": "Documento del titular.",
+            "example": "900123456"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "Indica si la cuenta esta activa.",
+            "example": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "store_id",
+          "type",
+          "holder_name",
+          "active"
+        ],
+        "title": "PayoutAccountOut"
       },
       "PayoutAccountPatch": {
         "properties": {
@@ -12681,6 +13657,219 @@
         ],
         "title": "SalesReportOut"
       },
+      "SellerPaymentOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Identificador del pago.",
+            "example": "pay-123"
+          },
+          "order_id": {
+            "type": "string",
+            "title": "Order Id",
+            "description": "Pedido asociado.",
+            "example": "order-123"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Estado del pago: pending, in_review, incomplete, paid, rejected, refunded.",
+            "example": "in_review"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method",
+            "description": "Metodo del pago.",
+            "example": "transfer"
+          },
+          "amount": {
+            "type": "integer",
+            "title": "Amount",
+            "description": "Monto esperado del pago.",
+            "example": 110000
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "description": "Moneda.",
+            "example": "COP"
+          },
+          "buyer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Name",
+            "description": "Nombre del comprador.",
+            "example": "Ana Perez"
+          },
+          "buyer_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Email",
+            "description": "Correo del comprador.",
+            "example": "ana@example.com"
+          },
+          "buyer_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Phone",
+            "description": "Telefono del comprador (para acuerdos por fuera).",
+            "example": "+573001112233"
+          },
+          "order_status": {
+            "type": "string",
+            "title": "Order Status",
+            "description": "Estado del pedido.",
+            "example": "pending"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "Fecha del pedido.",
+            "example": "2026-08-05T10:00:00Z"
+          },
+          "receipt_uploaded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Uploaded At",
+            "description": "Fecha de subida del comprobante.",
+            "example": "2026-08-05T10:05:00Z"
+          },
+          "receipt_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Url",
+            "description": "URL firmada del comprobante.",
+            "example": "https://.../comprobante.pdf"
+          },
+          "received_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Amount",
+            "description": "Monto registrado como recibido.",
+            "example": 90000
+          },
+          "difference": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difference",
+            "description": "Diferencia esperado - recibido (positivo: faltante).",
+            "example": 20000
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note",
+            "description": "Nota/novedad de la revision.",
+            "example": "Faltan $20.000"
+          },
+          "agreement_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agreement Note",
+            "description": "Constancia del acuerdo por monto de mas."
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At",
+            "description": "Fecha de la ultima revision.",
+            "example": "2026-08-05T11:00:00Z"
+          },
+          "payout_account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PayoutAccountOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cuenta destino usada."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "order_id",
+          "status",
+          "amount",
+          "currency",
+          "order_status",
+          "created_at"
+        ],
+        "title": "SellerPaymentOut"
+      },
       "SellerStoreMemberOut": {
         "properties": {
           "user_id": {
@@ -14156,6 +15345,263 @@
         ],
         "title": "TemporaryPasswordOut"
       },
+      "TransactionEventOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Identificador del asiento del historial.",
+            "example": "evt-123"
+          },
+          "from_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Status",
+            "description": "Estado anterior (nulo en el primer evento).",
+            "example": "in_review"
+          },
+          "to_status": {
+            "type": "string",
+            "title": "To Status",
+            "description": "Estado al que paso la transaccion.",
+            "example": "paid"
+          },
+          "actor_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Role",
+            "description": "Quien origino el cambio: buyer, seller, admin, system o gateway.",
+            "example": "seller"
+          },
+          "actor_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor User Id",
+            "description": "Usuario que origino el cambio, si aplica.",
+            "example": "seller-123"
+          },
+          "received_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Amount",
+            "description": "Monto recibido registrado en el evento, si aplica.",
+            "example": 110000
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Nota o novedad del evento.",
+            "example": "Coincide con el total"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "Fecha del evento.",
+            "example": "2026-08-05T11:00:00Z"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "to_status",
+          "created_at"
+        ],
+        "title": "TransactionEventOut"
+      },
+      "TransactionListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TransactionOut"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Transacciones que cumplen los filtros."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Cantidad de transacciones devueltas.",
+            "example": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "TransactionListOut"
+      },
+      "TransactionOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Identificador de la transaccion (pago).",
+            "example": "pay-123"
+          },
+          "order_id": {
+            "type": "string",
+            "title": "Order Id",
+            "description": "Pedido asociado.",
+            "example": "order-123"
+          },
+          "store_id": {
+            "type": "string",
+            "title": "Store Id",
+            "description": "Tienda asociada.",
+            "example": "store-123"
+          },
+          "store_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Store Name",
+            "description": "Nombre de la tienda.",
+            "example": "Nova Ropa"
+          },
+          "buyer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Id",
+            "description": "Comprador asociado.",
+            "example": "buyer-123"
+          },
+          "buyer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Name",
+            "description": "Nombre del comprador.",
+            "example": "Ana Perez"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "Proveedor: manual, pos, pending o pasarela.",
+            "example": "manual"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method",
+            "description": "Metodo de pago.",
+            "example": "transfer"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Estado vigente de la transaccion.",
+            "example": "paid"
+          },
+          "amount": {
+            "type": "integer",
+            "title": "Amount",
+            "description": "Monto esperado.",
+            "example": 110000
+          },
+          "received_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Amount",
+            "description": "Monto recibido registrado.",
+            "example": 110000
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "description": "Moneda.",
+            "example": "COP"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "Fecha de creacion de la transaccion.",
+            "example": "2026-08-05T10:00:00Z"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TransactionEventOut"
+            },
+            "type": "array",
+            "title": "Events",
+            "description": "Historial de estados (solo en el detalle)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "order_id",
+          "store_id",
+          "provider",
+          "status",
+          "amount",
+          "currency",
+          "created_at"
+        ],
+        "title": "TransactionOut"
+      },
       "UserCreate": {
         "properties": {
           "id": {
@@ -15571,6 +17017,102 @@
           "out_of_stock"
         ],
         "title": "WarehouseStockOut"
+      },
+      "WebhookIn": {
+        "properties": {
+          "provider_payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Payment Id",
+            "description": "Identificador del pago en la pasarela.",
+            "example": "mp-987"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id",
+            "description": "Pedido asociado si la pasarela no envia provider_payment_id.",
+            "example": "order-123"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status",
+            "description": "Estado reportado: approved, paid, rejected, refunded, pending.",
+            "example": "approved"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data",
+            "description": "Carga cruda alterna de la pasarela (data.id, data.status).",
+            "example": {
+              "id": "mp-987",
+              "status": "approved"
+            }
+          }
+        },
+        "type": "object",
+        "title": "WebhookIn",
+        "example": {
+          "order_id": "order-123",
+          "provider_payment_id": "mp-987",
+          "status": "approved"
+        }
+      },
+      "WebhookResultOut": {
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "title": "Payment Id",
+            "description": "Pago afectado por la notificacion.",
+            "example": "pay-123"
+          },
+          "order_id": {
+            "type": "string",
+            "title": "Order Id",
+            "description": "Pedido asociado.",
+            "example": "order-123"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Nuevo estado del pago tras el webhook.",
+            "example": "paid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "payment_id",
+          "order_id",
+          "status"
+        ],
+        "title": "WebhookResultOut"
       }
     },
     "securitySchemes": {

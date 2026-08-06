@@ -101,6 +101,44 @@ def payment_rejected_to_buyer(to: str | None, order_id: str, note: str | None) -
     )
 
 
+def _money(value: int) -> str:
+    return f"${value:,.0f} COP".replace(",", ".")
+
+
+def payment_incomplete_to_buyer(
+    to: str | None,
+    order_id: str,
+    expected_amount: int,
+    received_amount: int,
+    difference: int,
+    account: dict | None,
+) -> None:
+    """HU-PAG-07/08: aviso al comprador de que falto dinero y debe subir el saldo."""
+    if account:
+        if account.get("type") == "bre_b":
+            destino = f"<p><b>Llave Bre-B:</b> {account.get('breb_key')} · <b>Titular:</b> {account.get('holder_name')}</p>"
+        else:
+            destino = (
+                f"<p><b>Banco:</b> {account.get('bank_name')} · <b>Cuenta:</b> {account.get('account_type')} "
+                f"{account.get('account_number')} · <b>Titular:</b> {account.get('holder_name')}</p>"
+            )
+    else:
+        destino = ""
+    send_email(
+        to,
+        f"Falta completar tu pago · Pedido {order_id}",
+        _layout(
+            "Tu pago quedó incompleto",
+            f"<p>El vendedor recibió un monto menor al total del pedido <b>{order_id}</b>.</p>"
+            f"<p><b>Esperado:</b> {_money(expected_amount)}<br>"
+            f"<b>Recibido:</b> {_money(received_amount)}<br>"
+            f"<b>Diferencia pendiente:</b> {_money(difference)}</p>"
+            f"{destino}"
+            "<p>Transfiere el saldo faltante y vuelve a subir el comprobante desde el detalle de tu pedido.</p>",
+        ),
+    )
+
+
 def checkout_summary_to_buyer(to: str | None, confirmation: dict) -> None:
     summary = confirmation.get("summary", {})
     store_quotes = summary.get("store_quotes", [])
